@@ -62,7 +62,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .pins li button{padding:3px 7px;font-size:12px}
 .empty{color:var(--muted);font-size:12px;padding:6px 0}
 .status{position:absolute;z-index:800;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));
-  background:var(--panel);color:var(--fg);border:1px solid var(--accent);border-radius:999px;padding:6px 14px;font-size:13px;
+  background:var(--panel);color:var(--fg);border:1px solid var(--accent);border-radius:12px;padding:6px 14px;font-size:13px;
   box-shadow:0 4px 14px rgba(0,0,0,.18);max-width:calc(100% - 120px);text-align:center}
 .mapwrap{position:relative;min-height:0}
 .mapwrap #map{position:absolute;inset:0}
@@ -91,6 +91,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .locbtn.on{color:#1f6fd1;border-color:#1f6fd1}
 .res{width:max-content;transform:translate(10px,-50%);white-space:nowrap;font:600 12px var(--mono);background:#1f6fd1;color:#fff;padding:1px 6px;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.35)}
 .res.bad{background:#c2410c}
+#baseSel{font:inherit;font-size:14px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--fg);width:100%}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
 .chk input{accent-color:var(--accent)}
 .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px}
@@ -180,11 +181,29 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
 
     <section>
       <h2><span class="n">4</span>背景の地図</h2>
-      <div class="seg" role="group" aria-label="背景地図">
-        <button data-base="photo" class="on">航空写真</button>
-        <button data-base="std">標準地図</button>
-        <button data-base="pale">淡色地図</button>
+      <select id="baseSel" aria-label="背景の地図">
+        <optgroup label="地理院地図">
+          <option value="photo">航空写真（地理院）</option>
+          <option value="std">標準地図（地理院）</option>
+          <option value="pale">淡色地図（地理院）</option>
+        </optgroup>
+        <optgroup label="ほかの地図">
+          <option value="carto">見やすい地図（CARTO）</option>
+          <option value="osm">OpenStreetMap</option>
+          <option value="esri">航空写真（Esri）</option>
+        </optgroup>
+        <optgroup label="Google（APIキーが必要）">
+          <option value="groad">Googleマップ</option>
+          <option value="gsat">Google 航空写真</option>
+          <option value="ghyb">Google 航空写真＋地名</option>
+        </optgroup>
+      </select>
+      <div id="gKeyBox" class="note" hidden>
+        Googleの地図を表示するには、Google Maps Platform の APIキー（Map Tiles API を有効にしたもの）が必要です。キーはこのブラウザにだけ保存されます。
+        <div class="row" style="margin-top:6px"><input id="gKey" type="password" autocomplete="off" placeholder="APIキーを貼り付け" style="flex:1;min-width:0;font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg)"><button id="gKeySave" class="primary">使う</button><button id="gKeyCancel">やめる</button></div>
+        <div class="hint" style="margin-top:4px">ページを公開する場合は、キーにHTTPリファラー制限（公開先のURL）を必ず設定してください。</div>
       </div>
+      <div class="hint">自動位置合わせは、どの背景を選んでいても地理院地図と照合します。</div>
       <div class="row">
         <button id="homeBtn">会場周辺へ戻る</button>
         <button id="locBtn">現在地</button>
@@ -217,17 +236,44 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
 <script>
 (function(){
 const KEY='gx-overlay-v1';
-const HOME=[35.4875,139.4985], HOME_Z=15;
+const HOME=[35.4864,139.4904], HOME_Z=15; // 旧上瀬谷通信施設の中心（Wikipedia記載の座標）
+const SITE_R=1600; // 会場図の中心はこの距離（m）以内にあるはず
 const PRESETS=['メインゲート','メインホール','かながわ館（Vibrant INOCHI Forest）','つなぐ横浜館','西GXビレッジ','東GXビレッジ','国際ゾーン','ワールドプラザ','農と食ビレッジ','旧覆土式火薬庫','クラフトビレッジ','キッズビレッジ','テーマ館「ねっこ」','屋内出展施設「はなめぐり」','シンボル広場','フェスティバルステージ','日本政府苑','園芸文化館「いろはにわ」','里山ビレッジ','つなぐ横浜フィールド','null⁴（テトラヌル）','UR GREEN TABLE','とうきゅうグループ館','KT GROUP Mobi+','NTT EAST館『well』','大林組 モリソラミライ','三菱みんなの未来館','KAJIMA TREE','大和ハウスグループ エンドレスハートパーク','やさしくなりたい。STUDIO','竹中グループ くるくるく','住友林業館『ひゃくの森』','SOTETSU PARK','シミズ 森のまち','マクニカ グリーンテック メッセ'];
 
 const crs=L.CRS.EPSG3857;
 const map=L.map('map',{maxZoom:20,zoomControl:true}).setView(HOME,HOME_Z);
 const attr='<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
+const osmA='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
 const bases={
   photo:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',{maxNativeZoom:18,maxZoom:20,attribution:attr}),
   std:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:20,attribution:attr}),
-  pale:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:20,attribution:attr})
+  pale:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:20,attribution:attr}),
+  carto:L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxNativeZoom:19,maxZoom:20,attribution:osmA+' &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>'}),
+  osm:L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:19,maxZoom:20,attribution:osmA}),
+  esri:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:19,maxZoom:20,attribution:'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'})
 };
+/* Google Map Tiles API（公式・APIキー必須）。セッションを作ってからタイルを取得する */
+const GG={key:null,sess:{},types:{groad:{mapType:'roadmap'},gsat:{mapType:'satellite'},ghyb:{mapType:'satellite',layerTypes:['layerRoadmap']}}};
+try{GG.key=localStorage.getItem('gx-gkey')}catch(_){}
+const GLayer=L.TileLayer.extend({
+  getTileUrl(c){const s=GG.sess[this.options.gtype];return s?`https://tile.googleapis.com/v1/2dtiles/${c.z}/${c.x}/${c.y}?session=${encodeURIComponent(s.session)}&key=${encodeURIComponent(GG.key)}`:''}
+});
+for(const k of Object.keys(GG.types))bases[k]=new GLayer('',{gtype:k,maxNativeZoom:20,maxZoom:20,attribution:'<span class="gattr">Google</span>'});
+async function gSession(k){
+  const s=GG.sess[k];if(s&&s.expiry*1000>Date.now()+60000)return;
+  const body={...GG.types[k],language:'ja-JP',region:'JP'};
+  const r=await fetch('https://tile.googleapis.com/v1/createSession?key='+encodeURIComponent(GG.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok){let m='';try{m=(await r.json()).error.message}catch(_){}throw new Error(m||('HTTP '+r.status))}
+  GG.sess[k]=await r.json();
+}
+let gAttrT=null;
+function gAttr(){ // 表示範囲の著作権表記を取得
+  clearTimeout(gAttrT);if(!GG.types[S.base])return;
+  gAttrT=setTimeout(async()=>{const s=GG.sess[S.base];if(!s)return;const b=map.getBounds();
+    try{const r=await fetch(`https://tile.googleapis.com/tile/v1/viewport?session=${encodeURIComponent(s.session)}&key=${encodeURIComponent(GG.key)}&zoom=${map.getZoom()}&north=${b.getNorth()}&south=${b.getSouth()}&east=${b.getEast()}&west=${b.getWest()}`);
+      const j=await r.json();document.querySelectorAll('.gattr').forEach(e=>e.textContent='Google'+(j.copyright?' · '+j.copyright:''))}catch(_){}},400);
+}
+map.on('moveend',gAttr);
 
 const S={img:null,hash:null,w:0,h:0,A:null,opacity:.65,visible:true,base:'photo',pins:[]};
 let mode=null; // 'edit' | 'align' | 'pin'
@@ -549,7 +595,7 @@ function ui(){
   $('toggleImg').textContent=S.visible?'表示中':'非表示';$('toggleImg').classList.toggle('on',has&&S.visible);
   $('fineBtn').classList.toggle('on',fine);
   $('opacity').value=S.opacity;$('opv').textContent=Math.round(S.opacity*100)+'%';
-  document.querySelectorAll('[data-base]').forEach(b=>b.classList.toggle('on',b.dataset.base===S.base));
+  $('baseSel').value=S.base;
 }
 function status(t){$('status').hidden=!t;$('status').textContent=t}
 let ft;function flash(t,ms){status(t);clearTimeout(ft);ft=setTimeout(()=>status(mode==='edit'?'ドラッグで移動・四隅の■で拡大縮小・上の●で回転':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':''),ms)}
@@ -601,8 +647,19 @@ $('linesBtn').onclick=async()=>{
 $('wKm').onchange=e=>{const v=parseFloat(e.target.value);if(!(v>0))return readout();transformAround(v/geom().widthKm,0)};
 $('rotDeg').onchange=e=>{const v=parseFloat(e.target.value);if(isNaN(v))return readout();let d=v-geom().bearing;d=((d+540)%360)-180;transformAround(1,-d)};
 $('opacity').oninput=e=>{S.opacity=+e.target.value;render();ui();save()};
-document.querySelectorAll('[data-base]').forEach(b=>b.onclick=()=>setBase(b.dataset.base));
-function setBase(k){Object.values(bases).forEach(l=>map.removeLayer(l));bases[k].addTo(map);S.base=k;ui();save()}
+async function setBase(k){
+  if(!bases[k])k='photo';
+  if(GG.types[k]){
+    if(!GG.key){$('gKeyBox').hidden=false;$('gKeyBox').dataset.want=k;$('gKey').focus();ui();return}
+    try{await gSession(k)}catch(e){$('gKeyBox').hidden=false;$('gKeyBox').dataset.want=k;
+      flash('Googleの地図を読み込めませんでした：'+e.message+'。APIキーとMap Tiles APIの有効化を確認してください',7000);ui();return}
+  }
+  Object.values(bases).forEach(l=>map.removeLayer(l));bases[k].addTo(map);S.base=k;ui();save();gAttr();
+}
+$('baseSel').onchange=e=>setBase(e.target.value);
+$('gKeySave').onclick=()=>{const v=$('gKey').value.trim();if(!v){$('gKey').focus();return}
+  GG.key=v;GG.sess={};try{localStorage.setItem('gx-gkey',v)}catch(_){}$('gKeyBox').hidden=true;setBase($('gKeyBox').dataset.want||'groad')};
+$('gKeyCancel').onclick=()=>{$('gKeyBox').hidden=true;ui()};
 $('homeBtn').onclick=()=>map.flyTo(HOME,HOME_Z);
 /* 現在地（追跡） */
 const geo={watch:null,dot:null,acc:null,first:true,follow:true,last:null};
@@ -715,45 +772,42 @@ function remember(hash,aspect,An,Hn){
 }
 
 /* --- 特徴量：輝度エッジ + 水域（青） --- */
+/* 特徴量：線の「向き」（2倍角表現：c=|g|cos2φ, s=|g|sin2φ）。
+   明暗の向きに左右されず、ただ線が多いだけの場所どうしでは打ち消し合うので、偶然の一致が起きにくい */
 function features(data,w,h,useMask,bg){
-  const n=w*h,L=new Float32Array(n),f=new Float32Array(n),m=new Uint8Array(n),lab=new Uint8Array(n);
+  const n=w*h,Lm=new Float32Array(n),c=new Float32Array(n),sn=new Float32Array(n),m=new Uint8Array(n),lab=new Uint8Array(n);
   for(let i=0;i<n;i++){
     const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3];
-    L[i]=(0.299*r+0.587*g+0.114*b)/255;
-    // 会場図側のみ：鮮やかな色の文字・ラベル・点線を照合から外す
-    if(useMask){const mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx>90&&(mx-mn)/mx>0.7)lab[i]=1}
+    Lm[i]=(0.299*r+0.587*g+0.114*b)/255;
     if(useMask){
+      const mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx>90&&(mx-mn)/mx>0.7)lab[i]=1; // 鮮やかな文字・ラベル・点線
       if(a<128)m[i]=0;
       else if(bg){const dr=r-bg[0],dg=g-bg[1],db=b-bg[2];m[i]=(dr*dr+dg*dg+db*db)>1600?1:0}
       else m[i]=1;
     }else m[i]=1;
   }
-  let sum=0,cnt=0;
+  let sum=0,cnt=0;const G=new Float32Array(n),GX=new Float32Array(n),GY=new Float32Array(n);
   for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
     const i=y*w+x;
-    const gx=L[i-w+1]+2*L[i+1]+L[i+w+1]-L[i-w-1]-2*L[i-1]-L[i+w-1];
-    const gy=L[i+w-1]+2*L[i+w]+L[i+w+1]-L[i-w-1]-2*L[i-w]-L[i-w+1];
-    const g=Math.sqrt(gx*gx+gy*gy);f[i]=g;sum+=g;cnt++;
+    const gx=Lm[i-w+1]+2*Lm[i+1]+Lm[i+w+1]-Lm[i-w-1]-2*Lm[i-1]-Lm[i+w-1];
+    const gy=Lm[i+w-1]+2*Lm[i+w]+Lm[i+w+1]-Lm[i-w-1]-2*Lm[i-w]-Lm[i-w+1];
+    const g=Math.sqrt(gx*gx+gy*gy);G[i]=g;GX[i]=gx;GY[i]=gy;sum+=g;cnt++;
   }
   const mean=sum/Math.max(cnt,1)||1;
   for(let i=0;i<n;i++){
-    const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
-    const water=(b-r>35&&b>=g-5)?1:0;
-    f[i]=Math.min(f[i]/mean,4)+2*water;
+    const g=G[i];if(g<=1e-9)continue;
+    let k=Math.min(g/mean,4)/g;
+    if(useMask&&(lab[i]||(i>0&&lab[i-1])||lab[i+1]||(i>=w&&lab[i-w])||lab[i+w]))k=0; // ラベルとその縁取りは使わない
+    c[i]=(GX[i]*GX[i]-GY[i]*GY[i])*k;sn[i]=2*GX[i]*GY[i]*k;
   }
-  if(useMask){
-    // ラベル画素とその縁取りのエッジを消す
-    for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;
-      if(lab[i]||lab[i-1]||lab[i+1]||lab[i-w]||lab[i+w])f[i]=Math.min(f[i],0.5)}
-    if(bg){
-      // 周囲の大半が地図である部分だけを残す（説明ボックス・余白・文字を除外、白い園路は残す）
-      const r=Math.max(2,Math.round(Math.min(w,h)/40)),src=new Float32Array(n);
-      for(let i=0;i<n;i++)src[i]=m[i];
-      const frac=boxBlur(src,w,h,r);
-      for(let i=0;i<n;i++)m[i]=(frac[i]>0.55&&data[i*4+3]>=128&&!lab[i])?1:0;
-    }
+  if(useMask&&bg){
+    // 周囲の大半が地図である部分だけを残す（説明ボックス・余白・文字を除外、白い園路は残す）
+    const r=Math.max(2,Math.round(Math.min(w,h)/40)),src=new Float32Array(n);
+    for(let i=0;i<n;i++)src[i]=m[i];
+    const frac=boxBlur(src,w,h,r);
+    for(let i=0;i<n;i++)m[i]=(frac[i]>0.55&&data[i*4+3]>=128&&!lab[i])?1:0;
   }
-  return {f:blur(f,w,h),m};
+  return {c:blur(c,w,h),s:blur(sn,w,h),m};
 }
 function boxBlur(f,w,h,r){
   const t=new Float32Array(f.length),o=new Float32Array(f.length);
@@ -808,22 +862,27 @@ async function buildRef(kind){
   if(loaded<jobs.length*0.5)throw new Error('notile');
   return refCache[kind]=refFromCanvas(kind,cv,ox,oy);
 }
+function splitSpec(Zr,Zi,i,j){ // Z=FFT(A+iB) から A,B それぞれのスペクトルを取り出す
+  return [(Zr[i]+Zr[j])/2,(Zi[i]-Zi[j])/2,(Zi[i]+Zi[j])/2,-(Zr[i]-Zr[j])/2];
+}
 function refFromCanvas(kind,cv,ox,oy){
   const at=(size)=>{const c=document.createElement('canvas');c.width=c.height=size;const x=c.getContext('2d');
     x.imageSmoothingQuality='high';x.drawImage(cv,0,0,size,size);return x.getImageData(0,0,size,size).data};
   const fs=BOX/FF;let fd;
   try{fd=at(fs)}catch(e){throw new Error('tainted')}
-  const F=features(fd,fs,fs,false).f;
+  const Ff=features(fd,fs,fs,false);
   // 粗い探索の2段階：広域（約31m/px・6km四方）と中央部（約16m/px・4km四方）
   const levels=[{cf:8,minW:1400,maxW:4000},{cf:4,minW:0,maxW:1900}].map(L0=>{
-    const full=BOX/L0.cf,d=at(full),C=features(d,full,full,false).f;
+    const full=BOX/L0.cf,d=at(full),C=features(d,full,full,false);
     const cs=Math.min(full,N),off=(full-cs)/2;
-    const FRr=new Float64Array(N*N),FRi=new Float64Array(N*N),F2r=new Float64Array(N*N),F2i=new Float64Array(N*N);
-    for(let y=0;y<cs;y++)for(let x=0;x<cs;x++){const v=C[(y+off)*full+x+off];FRr[y*N+x]=v;F2r[y*N+x]=v*v}
-    fft2(FRr,FRi,false);fft2(F2r,F2i,false);
-    return {...L0,cs,off,FRr,FRi,F2r,F2i};
+    const Zr=new Float64Array(N*N),Zi=new Float64Array(N*N),F2r=new Float64Array(N*N),F2i=new Float64Array(N*N);
+    for(let y=0;y<cs;y++)for(let x=0;x<cs;x++){const o=(y+off)*full+x+off,a=C.c[o],b=C.s[o];Zr[y*N+x]=a;Zi[y*N+x]=b;F2r[y*N+x]=a*a+b*b}
+    fft2(Zr,Zi,false);fft2(F2r,F2i,false);
+    const Cr=new Float64Array(N*N),Ci=new Float64Array(N*N),Sr=new Float64Array(N*N),Si=new Float64Array(N*N);
+    for(let ky=0;ky<N;ky++)for(let kx=0;kx<N;kx++){const i=ky*N+kx,j=((N-ky)%N)*N+((N-kx)%N);const q=splitSpec(Zr,Zi,i,j);Cr[i]=q[0];Ci[i]=q[1];Sr[i]=q[2];Si[i]=q[3]}
+    return {...L0,cs,off,Cr,Ci,Sr,Si,F2r,F2i};
   });
-  return {kind,ox,oy,fs,F,levels};
+  return {kind,ox,oy,fs,Fc:Ff.c,Fs:Ff.s,levels};
 }
 
 /* --- 粗い探索 --- */
@@ -843,38 +902,34 @@ function renderTmpl(img,k,theta){
   x.imageSmoothingQuality='high';x.translate(tw/2,th/2);x.rotate(theta);x.scale(k,k);x.drawImage(img,-w/2,-h/2);
   return {tw,th,data:x.getImageData(0,0,tw,th).data};
 }
-const Zr=new Float64Array(N*N),Zi=new Float64Array(N*N),Pr=new Float64Array(N*N),Pi=new Float64Array(N*N),Qr=new Float64Array(N*N),Qi=new Float64Array(N*N);
+const Zr=new Float64Array(N*N),Zi=new Float64Array(N*N),Mr=new Float64Array(N*N),Mi=new Float64Array(N*N),Pr=new Float64Array(N*N),Pi=new Float64Array(N*N);
 function coarseCombo(ref,img,bg,k,theta,win){ // ref = 探索レベル、win = 中心の探索範囲（精密px）
   const {tw,th,data}=renderTmpl(img,k,theta);
   if(tw>ref.cs||th>ref.cs||tw<8||th<8)return null;
-  const {f,m}=features(data,tw,th,true,bg);
-  let nM=0,sum=0;for(let i=0;i<f.length;i++)if(m[i]){nM++;sum+=f[i]}
-  if(nM<40)return null;
-  const mean=sum/nM;let ET=0;
-  Zr.fill(0);Zi.fill(0);
-  for(let y=0;y<th;y++)for(let x=0;x<tw;x++){const i=y*tw+x;if(!m[i])continue;const t=f[i]-mean;ET+=t*t;Zr[y*N+x]=t;Zi[y*N+x]=1}
-  if(ET<1e-6)return null;
-  fft2(Zr,Zi,false);
+  const {c,s:sn,m}=features(data,tw,th,true,bg);
+  let nM=0,ET=0;
+  Zr.fill(0);Zi.fill(0);Mr.fill(0);Mi.fill(0);
+  for(let y=0;y<th;y++)for(let x=0;x<tw;x++){const i=y*tw+x;if(!m[i])continue;nM++;const a=c[i],b=sn[i];ET+=a*a+b*b;Zr[y*N+x]=a;Zi[y*N+x]=b;Mr[y*N+x]=1}
+  if(nM<40||ET<1e-6)return null;
+  fft2(Zr,Zi,false);fft2(Mr,Mi,false);
   for(let ky=0;ky<N;ky++)for(let kx=0;kx<N;kx++){
     const i=ky*N+kx,j=((N-ky)%N)*N+((N-kx)%N);
-    const tR=(Zr[i]+Zr[j])/2,tI=(Zi[i]-Zi[j])/2;       // FT
-    const mR=(Zi[i]+Zi[j])/2,mI=-(Zr[i]-Zr[j])/2;      // FM
-    const a=ref.FRr[i],b=ref.FRi[i];
-    const AR=a*tR+b*tI,AI=b*tR-a*tI;                  // FR·conj(FT)
-    const BR=a*mR+b*mI,BI=b*mR-a*mI;                  // FR·conj(FM)
-    Pr[i]=AR-BI;Pi[i]=AI+BR;
-    const c=ref.F2r[i],d=ref.F2i[i];
-    Qr[i]=c*mR+d*mI;Qi[i]=d*mR-c*mI;                  // FR²·conj(FM)
+    const [tcR,tcI,tsR,tsI]=splitSpec(Zr,Zi,i,j);
+    // P = Rc·conj(Tc) + Rs·conj(Ts) ， Q = R²·conj(M) をまとめて逆変換（実部=P，虚部=Q）
+    const a=ref.Cr[i],b=ref.Ci[i],e=ref.Sr[i],f=ref.Si[i];
+    const PR=a*tcR+b*tcI+e*tsR+f*tsI,PI=b*tcR-a*tcI+f*tsR-e*tsI;
+    const g=ref.F2r[i],h=ref.F2i[i],mR=Mr[i],mI=Mi[i];
+    const QR=g*mR+h*mI,QI=h*mR-g*mI;
+    Pr[i]=PR-QI;Pi[i]=PI+QR;
   }
-  fft2(Pr,Pi,true);fft2(Qr,Qi,true);
+  fft2(Pr,Pi,true);
   let best=-2,bx=0,by=0;
   const f2w=ref.cf/FF;
   for(let ty=0;ty<=ref.cs-th;ty++)for(let tx=0;tx<=ref.cs-tw;tx++){
     if(win){const ex=(tx+tw/2+ref.off)*f2w-win.x,ey=(ty+th/2+ref.off)*f2w-win.y;if(ex*ex+ey*ey>win.r*win.r)continue}
-    const i=ty*N+tx,c1=Pr[i],c2=Pi[i],v=Qr[i]-c2*c2/nM;
-    if(v<=1e-6)continue;const s=c1/Math.sqrt(ET*v);
-    if(s>best){best=s;bx=tx;by=ty}}
-  // 会場図の中心が参照範囲のどこに来るか（粗いpx）
+    const i=ty*N+tx,c1=Pr[i],v=Pi[i];
+    if(v<=1e-6)continue;const sc=c1/Math.sqrt(ET*v);
+    if(sc>best){best=sc;bx=tx;by=ty}}
   const f2=ref.cf/FF; // 精密グリッド上の中心・縮尺に換算
   return {score:best*Math.pow(nM,0.25),r:best,theta,kf:k*f2,fx:(bx+tw/2+ref.off)*f2,fy:(by+th/2+ref.off)*f2};
 }
@@ -882,30 +937,31 @@ function coarseCombo(ref,img,bg,k,theta,win){ // ref = 探索レベル、win = �
 /* --- 精密化（点サンプリング相関 + 座標降下） --- */
 function finePoints(img,bg,kf){
   const w=img.naturalWidth,h=img.naturalHeight,dw=Math.max(8,Math.round(w*kf)),dh=Math.max(8,Math.round(h*kf));
-  const c=document.createElement('canvas');c.width=dw;c.height=dh;const x=c.getContext('2d');
+  const cv=document.createElement('canvas');cv.width=dw;cv.height=dh;const x=cv.getContext('2d');
   x.imageSmoothingQuality='high';x.drawImage(img,0,0,dw,dh);
-  const {f,m}=features(x.getImageData(0,0,dw,dh).data,dw,dh,true,bg);
-  let idx=[];for(let i=0;i<f.length;i++)if(m[i])idx.push(i);
+  const {c,s:sn,m}=features(x.getImageData(0,0,dw,dh).data,dw,dh,true,bg);
+  let idx=[];for(let i=0;i<c.length;i++)if(m[i])idx.push(i);
   const stride=Math.max(1,Math.floor(idx.length/9000));
-  const px=[],py=[],pv=[];
-  for(let n=0;n<idx.length;n+=stride){const i=idx[n];px.push(((i%dw)+0.5)*w/dw);py.push((Math.floor(i/dw)+0.5)*h/dh);pv.push(f[i])}
-  const mv=pv.reduce((a,b)=>a+b,0)/pv.length;
-  return {px,py,pv:pv.map(v=>v-mv),w,h,area:idx.length};
+  const px=[],py=[],pc=[],ps=[];
+  for(let n=0;n<idx.length;n+=stride){const i=idx[n];px.push(((i%dw)+0.5)*w/dw);py.push((Math.floor(i/dw)+0.5)*h/dh);pc.push(c[i]);ps.push(sn[i])}
+  let et=0;for(let i=0;i<pc.length;i++)et+=pc[i]*pc[i]+ps[i]*ps[i];
+  return {px,py,pc,ps,et,w,h,area:idx.length};
 }
 function fineScore(ref,P,p){
-  const M=p.m||[Math.cos(p.t)*p.k,-Math.sin(p.t)*p.k,Math.sin(p.t)*p.k,Math.cos(p.t)*p.k],F=ref.F,S2=ref.fs;
-  let sxy=0,sy=0,syy=0,n=0,out=0;const cw=P.w/2,ch=P.h/2;
+  const M=p.m||[Math.cos(p.t)*p.k,-Math.sin(p.t)*p.k,Math.sin(p.t)*p.k,Math.cos(p.t)*p.k],Fc=ref.Fc,Fs=ref.Fs,S2=ref.fs;
+  // 線の向きは配置の回転ぶん回す（2倍角なので2θ）
+  const th=Math.atan2(M[2],M[0]),c2=Math.cos(2*th),s2=Math.sin(2*th);
+  let sxy=0,syy=0,stt=0,n=0,out=0;const cw=P.w/2,ch=P.h/2;
   for(let i=0;i<P.px.length;i++){
     const dx=P.px[i]-cw,dy=P.py[i]-ch,u=p.cx+M[0]*dx+M[1]*dy-0.5,v=p.cy+M[2]*dx+M[3]*dy-0.5;
     if(u<0||v<0||u>=S2-1||v>=S2-1){out++;continue}
-    const x0=u|0,y0=v|0,fx=u-x0,fy=v-y0,o=y0*S2+x0;
-    const s=(F[o]*(1-fx)+F[o+1]*fx)*(1-fy)+(F[o+S2]*(1-fx)+F[o+S2+1]*fx)*fy;
-    sxy+=P.pv[i]*s;sy+=s;syy+=s*s;n++;
+    const x0=u|0,y0=v|0,fx=u-x0,fy=v-y0,o=y0*S2+x0,w00=(1-fx)*(1-fy),w10=fx*(1-fy),w01=(1-fx)*fy,w11=fx*fy;
+    const rc=Fc[o]*w00+Fc[o+1]*w10+Fc[o+S2]*w01+Fc[o+S2+1]*w11,rs=Fs[o]*w00+Fs[o+1]*w10+Fs[o+S2]*w01+Fs[o+S2+1]*w11;
+    const tc=P.pc[i]*c2-P.ps[i]*s2,ts=P.pc[i]*s2+P.ps[i]*c2;
+    sxy+=tc*rc+ts*rs;syy+=rc*rc+rs*rs;stt+=tc*tc+ts*ts;n++;
   }
-  if(n<30)return -1;
-  let sxx=0;for(let i=0;i<P.pv.length;i++)sxx+=P.pv[i]*P.pv[i];sxx*=n/P.pv.length;
-  const vy=syy-sy*sy/n;if(vy<=1e-9)return -1;
-  return sxy/Math.sqrt(sxx*vy)*(1-0.5*out/P.px.length);
+  if(n<30||syy<=1e-9||stt<=1e-9)return -1;
+  return sxy/Math.sqrt(stt*syy)*(1-0.5*out/P.px.length);
 }
 function refine(ref,img,bg,cand){
   const kf=cand.kf;
@@ -982,10 +1038,11 @@ async function autoAlign(local){
         for(let i=-2;i<=2;i++)for(let a=-15;a<=15;a+=3)
           jobs.push({ref,lv,Wg:Wg0*Math.pow(1.25,i/2),th:p0.t+a*Math.PI/180,win});
       }else{
-        // 会場図の横幅（地上距離）0.6〜4km・全方位を探索
-        const scales=[];for(let i=0;i<12;i++)scales.push(600*Math.pow(4000/600,i/11));
+        // 会場（約100ha）全体の図なので横幅は1〜4km、中心は旧上瀬谷通信施設から1.6km以内に限って全方位を探索
+        const c0=aToFine(ref,[1,0,0,-1,...toM(L.latLng(HOME))],0,0),win={x:c0.cx,y:c0.cy,r:SITE_R/(m15*FF)};
+        const scales=[];for(let i=0;i<10;i++)scales.push(1000*Math.pow(4,i/9));
         for(const lv of ref.levels)for(const Wg of scales)if(Wg>=lv.minW&&Wg<=lv.maxW)
-          for(let a=0;a<360;a+=10)jobs.push({ref,lv,Wg,th:a*Math.PI/180,win:null});
+          for(let a=0;a<360;a+=10)jobs.push({ref,lv,Wg,th:a*Math.PI/180,win});
       }
     }
     let done=0;const cands=[];
@@ -1002,24 +1059,29 @@ async function autoAlign(local){
       top.push(c);if(top.length>=(local?6:16))break;
     }
     if(local)for(const ref of refs){const p0=aToFine(ref,S.A,w,h);top.push({ref,fx:p0.cx,fy:p0.cy,theta:p0.t,kf:p0.k})}
-    let best=null;
+    const results=[];
     for(let i=0;i<top.length;i++){
       autoUI(`候補を細かく詰めています（${i+1}/${top.length}）`,80+i/top.length*18);await pause();
-      const r=refine(top[i].ref,img,bg,top[i]);r.ref=top[i].ref;
-      if(!best||r.score>best.score)best=r;
+      const r=refine(top[i].ref,img,bg,top[i]);r.ref=top[i].ref;r.A=fineToA(r.ref,r.p,w,h);results.push(r);
     }
-    const sc=best.r;
-    if(!local&&sc<GOOD){
+    results.sort((a,b)=>b.score-a.score);
+    const best=results[0],sc=best.r;
+    // 別の場所・向きの候補がほぼ同じ点数なら「決めきれない」とみなす
+    const cOf=r=>apply(r.A,w/2,h/2),bc=cOf(best),lat0=Math.cos(HOME[0]*Math.PI/180);
+    const rival=results.slice(1).find(r=>{const c=cOf(r);return Math.hypot(c[0]-bc[0],c[1]-bc[1])*lat0>150||Math.abs(Math.atan2(Math.sin(r.p.t-best.p.t),Math.cos(r.p.t-best.p.t)))>0.26});
+    const margin=rival?sc-rival.r:1;
+    const sure=sc>=0.35&&margin>=0.08?2:sc>=GOOD&&margin>=0.04?1:0;
+    if(!local&&sure<2){
       S.A=autoPrevA;S.H=autoPrevH;render();setMode('edit');
-      autoUI(`自動では位置を決めきれませんでした（一致度 <span class="score">${sc.toFixed(2)}</span>）。会場図をドラッグ・回転・拡大縮小で<b>だいたい</b>重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。`,100,true);
+      autoUI(`自動では位置を決めきれませんでした（一致度 <span class="score">${sc.toFixed(2)}</span>${rival?`・2番目の候補 <span class="score">${rival.r.toFixed(2)}</span>`:''}）。会場図をドラッグ・回転・拡大縮小で<b>だいたい</b>重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。`,100,true);
       $('autoKeep').hidden=true;
       return;
     }
-    S.A=fineToA(best.ref,best.p,w,h);S.H=null;S.visible=true;render();if(!local)fitToImage();
-    const level=sc>=0.35?'高い':sc>=GOOD?'まあまあ':'低い';
+    S.A=best.A;S.H=null;S.visible=true;render();if(!local)fitToImage();
+    const level=['低い','まあまあ','高い'][sure];
     const deg=((best.p.t*180/Math.PI)%360+360)%360;
     autoUI(`${local?'近くを探して吸着させました':'自動で合わせました'}。一致度 <span class="score">${sc.toFixed(2)}</span>（${level}）・${best.ref.kind==='photo'?'航空写真':'標準地図'}と照合・図の上方向は北から時計回りに${deg.toFixed(0)}°。`+
-      (sc<GOOD?'<br>自信が低いので、ずれていたら「元に戻す」か「目印で修正する」を使ってください。':'<br>透明度を変えて確認し、ずれていれば目印で修正できます。'),100,true);
+      (sure<2?'<br>確実ではありません。「点滅させる」「線だけ表示」で道路や川が合っているか必ず確認し、ずれていたら「元に戻す」か「目印で修正する」を使ってください。':'<br>「点滅させる」「線だけ表示」で確認し、ずれていれば目印で修正できます。'),100,true);
   }catch(e){
     S.A=autoPrevA;S.H=autoPrevH;render();
     const msg=e.message==='tainted'?'地図タイルの画像を読み取れなかったため、自動で合わせられませんでした。ブラウザでファイルを直接開いて試してください。'
@@ -1070,7 +1132,7 @@ $('resetYes').onclick=()=>{$('resetConfirm').hidden=true;stopCheck();S.img=null;
 
 /* ---------- boot ---------- */
 try{restore(JSON.parse(localStorage.getItem(KEY)))}catch(_){}
-bases[S.base].addTo(map);
+if(GG.types[S.base]){const want=S.base;S.base='photo';bases.photo.addTo(map);setBase(want)}else bases[S.base].addTo(map);
 render();drawPins();listPins();ui();updG();
 if(!S.img)status('まず会場図の画像を読み込んでください（ドロップ・貼り付けもOK）');
 })();
