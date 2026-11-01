@@ -89,6 +89,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 @media (pointer:coarse){.hdl{width:24px;height:24px;transform:translate(-12px,-12px)}.hdl.rot{width:28px;height:28px;transform:translate(-14px,-14px)}}
 .locbtn{width:40px;height:40px;border-radius:8px;border:2px solid rgba(0,0,0,.2);background:#fff;color:#1d2a22;display:grid;place-items:center;cursor:pointer;padding:0;margin-bottom:calc(10px + env(safe-area-inset-bottom,0px))!important}
 .locbtn.on{color:#1f6fd1;border-color:#1f6fd1}
+.res{width:max-content;transform:translate(10px,-50%);white-space:nowrap;font:600 12px var(--mono);background:#1f6fd1;color:#fff;padding:1px 6px;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.res.bad{background:#c2410c}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
 .chk input{accent-color:var(--accent)}
 .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px}
@@ -147,6 +149,11 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
       <div class="geo-row">
         <label for="wKm">横幅</label><input type="number" id="wKm" step="0.05" min="0.1" max="20" inputmode="decimal" disabled><span class="hint">km</span>
         <label for="rotDeg">向き</label><input type="number" id="rotDeg" step="0.5" min="-180" max="180" inputmode="decimal" disabled><span class="hint">°</span>
+      </div>
+      <div class="row" aria-label="合っているか確認する">
+        <span class="hint" style="margin-right:2px">確認：</span>
+        <button id="blinkBtn" disabled title="会場図を点滅させて、道路や川が飛ぶかどうかで確認します">点滅させる</button>
+        <button id="linesBtn" disabled title="会場図の線だけを航空写真に重ねます">線だけ表示</button>
       </div>
       <label class="slider">透明度<input type="range" id="opacity" min="0.1" max="1" step="0.05" value="0.65"><span class="num" id="opv">65%</span></label>
       <div id="alignPanel" class="note" hidden>
@@ -235,14 +242,45 @@ const toM=ll=>{const p=crs.project(ll);return [p.x,p.y]};
 const toLL=m=>crs.unproject(L.point(m[0],m[1]));
 const apply=(A,x,y)=>[A[0]*x+A[2]*y+A[4],A[1]*x+A[3]*y+A[5]];
 function inv(A,m){const det=A[0]*A[3]-A[2]*A[1];const X=m[0]-A[4],Y=m[1]-A[5];return [(A[3]*X-A[2]*Y)/det,(-A[1]*X+A[0]*Y)/det]}
+/* 配置：S.H（遠近補正つき・3x3）があればそれ、なければ S.A（アフィン） */
+const hApply=(H,x,y)=>{const w=H[6]*x+H[7]*y+H[8];return [(H[0]*x+H[1]*y+H[2])/w,(H[3]*x+H[4]*y+H[5])/w]};
+function P(x,y){return S.H?hApply(S.H,x,y):apply(S.A,x,y)}
+function invP(m){return S.H?hApply(inv3(S.H),m[0],m[1]):inv(S.A,m)}
+function mul3(a,b){const r=new Array(9);for(let i=0;i<3;i++)for(let j=0;j<3;j++)r[i*3+j]=a[i*3]*b[j]+a[i*3+1]*b[3+j]+a[i*3+2]*b[6+j];return r}
+function inv3(m){const [a,b,c,d,e,f,g,h,i]=m,A=e*i-f*h,B=-(d*i-f*g),C=d*h-e*g,det=a*A+b*B+c*C;
+  return [A/det,-(b*i-c*h)/det,(b*f-c*e)/det,B/det,(a*i-c*g)/det,-(a*f-c*d)/det,C/det,-(a*h-b*g)/det,(a*e-b*d)/det]}
+function solveN(M,b){const n=b.length,a=M.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(a[r][c])>Math.abs(a[p][c]))p=r;
+    if(Math.abs(a[p][c])<1e-12)return null;[a[c],a[p]]=[a[p],a[c]];
+    for(let r=0;r<n;r++)if(r!==c){const f=a[r][c]/a[c][c];if(f)for(let k=c;k<=n;k++)a[r][k]-=f*a[c][k]}}
+  return a.map((r,i)=>r[n]/r[i])}
+/* 対応点（4点以上）から射影変換を最小二乗で求める（座標は正規化して計算） */
+function fitH(src,dst){
+  const norm=pts=>{const n=pts.length;let mx=0,my=0;pts.forEach(p=>{mx+=p[0];my+=p[1]});mx/=n;my/=n;
+    let d=0;pts.forEach(p=>d+=Math.hypot(p[0]-mx,p[1]-my));const s=(d/n)||1;return {mx,my,s}};
+  const ni=norm(src),nm=norm(dst),N=Array.from({length:8},()=>new Array(8).fill(0)),bv=new Array(8).fill(0);
+  src.forEach((p,i)=>{const u=(p[0]-ni.mx)/ni.s,v=(p[1]-ni.my)/ni.s,U=(dst[i][0]-nm.mx)/nm.s,V=(dst[i][1]-nm.my)/nm.s;
+    [[[u,v,1,0,0,0,-u*U,-v*U],U],[[0,0,0,u,v,1,-u*V,-v*V],V]].forEach(([r,t])=>{for(let a=0;a<8;a++){bv[a]+=r[a]*t;for(let c=0;c<8;c++)N[a][c]+=r[a]*r[c]}})});
+  const h=solveN(N,bv);if(!h)return null;
+  const Hn=[...h,1],Ti=[1/ni.s,0,-ni.mx/ni.s,0,1/ni.s,-ni.my/ni.s,0,0,1],Tm=[nm.s,0,nm.mx,0,nm.s,nm.my,0,0,1];
+  return mul3(Tm,mul3(Hn,Ti));
+}
+function leftMul(T){ // メートル座標で T を後から掛ける（移動・回転・拡大）
+  if(S.H){S.H=mul3(T,S.H);return}
+  const A=S.A,M=mul3(T,[A[0],A[2],A[4],A[1],A[3],A[5],0,0,1]);S.A=[M[0],M[3],M[1],M[4],M[2],M[5]];
+}
+function approxA(){ // 遠近補正つきの配置に近いアフィン
+  const g=[];for(let i=0;i<=2;i++)for(let j=0;j<=2;j++){const x=S.w*i/2,y=S.h*j/2;g.push({img:[x,y],real:P(x,y)})}
+  return solve(g);
+}
 
 function render(){
   const show=S.img&&S.visible;
   imgEl.hidden=!show; if(!show) return;
-  const lp=m=>map.latLngToLayerPoint(toLL(m));
-  const p0=lp(apply(S.A,0,0)),p1=lp(apply(S.A,S.w,0)),p2=lp(apply(S.A,0,S.h));
+  const lp=m=>{const p=map.latLngToLayerPoint(toLL(m));return [p.x,p.y]};
+  const src=[[0,0],[S.w,0],[S.w,S.h],[0,S.h]],G=fitH(src,src.map(([x,y])=>lp(P(x,y))));
   imgEl.style.width=S.w+'px'; imgEl.style.height=S.h+'px';
-  imgEl.style.transform=`matrix(${(p1.x-p0.x)/S.w},${(p1.y-p0.y)/S.w},${(p2.x-p0.x)/S.h},${(p2.y-p0.y)/S.h},${p0.x},${p0.y})`;
+  if(G)imgEl.style.transform=`matrix3d(${G[0]},${G[3]},0,${G[6]},${G[1]},${G[4]},0,${G[7]},0,0,1,0,${G[2]},${G[5]},0,${G[8]})`;
   imgEl.style.opacity=S.opacity;
   updHandles();readout();
 }
@@ -258,7 +296,7 @@ function defaultA(w,h){
 }
 
 function setImage(dataUrl,w,h,A){
-  S.img=dataUrl;S.w=w;S.h=h;S.A=A||defaultA(w,h);S.visible=true;
+  S.img=dataUrl;S.w=w;S.h=h;S.A=A||defaultA(w,h);S.H=null;S.visible=true;edgeUrl=null;stopCheck();
   imgEl.src=dataUrl; render(); ui(); save();
 }
 
@@ -274,6 +312,7 @@ function loadFile(file){
     S.hash=dhash(cv);
     const mem=recall(S.hash,w/h);
     setImage(url,w,h,mem?denorm(mem.An,w,h):null);
+    if(mem&&mem.Hn){S.H=denormH(mem.Hn,w,h);render();save()}
     if(mem){
       fitToImage();
       flash('前回この会場図で合わせた位置を復元しました',4000);
@@ -290,18 +329,17 @@ function loadFile(file){
 /* similarity / scale / rotate around image center (in mercator meters) */
 function transformAround(scale,angDeg,noSave){
   if(!S.img)return;
-  const c=apply(S.A,S.w/2,S.h/2),t=angDeg*Math.PI/180,co=Math.cos(t)*scale,si=Math.sin(t)*scale;
-  const A=S.A,R=(x,y)=>[co*x-si*y,si*x+co*y];
-  const c1=R(A[0],A[1]),c2=R(A[2],A[3]),tr=R(A[4]-c[0],A[5]-c[1]);
-  S.A=[c1[0],c1[1],c2[0],c2[1],tr[0]+c[0],tr[1]+c[1]];render();if(!noSave)save();
+  const c=P(S.w/2,S.h/2),t=angDeg*Math.PI/180,co=Math.cos(t)*scale,si=Math.sin(t)*scale;
+  leftMul([co,-si,c[0]-(co*c[0]-si*c[1]),si,co,c[1]-(si*c[0]+co*c[1]),0,0,1]);render();if(!noSave)save();
 }
-function moveBy(dx,dy,noSave){if(!S.img)return;S.A[4]+=dx;S.A[5]+=dy;render();if(!noSave)save()}
+function moveBy(dx,dy,noSave){if(!S.img)return;leftMul([1,0,dx,0,1,dy,0,0,1]);render();if(!noSave)save()}
 
 /* 地上の横幅（km）と向き（図の上方向が北から時計回りに何度か） */
 function geom(){
-  const lat=Math.cos(toLL(apply(S.A,S.w/2,S.h/2)).lat*Math.PI/180);
-  const widthKm=Math.hypot(S.A[0],S.A[1])*S.w*lat/1000;
-  const bearing=((Math.atan2(-S.A[2],-S.A[3])*180/Math.PI)%360+360)%360;
+  const cx=S.w/2,cy=S.h/2,c=P(cx,cy),px=P(cx+1,cy),py=P(cx,cy+1);
+  const lat=Math.cos(toLL(c).lat*Math.PI/180);
+  const widthKm=Math.hypot(px[0]-c[0],px[1]-c[1])*S.w*lat/1000;
+  const bearing=((Math.atan2(-(py[0]-c[0]),-(py[1]-c[1]))*180/Math.PI)%360+360)%360;
   return {widthKm,bearing};
 }
 function readout(){
@@ -345,7 +383,7 @@ imgEl.addEventListener('wheel',e=>{
 /* 四隅のハンドル（拡大縮小）と上の丸ハンドル（回転） */
 const hLayer=L.layerGroup().addTo(map);let handles=[],hDrag=null;
 const hIcon=cls=>L.divIcon({className:'',html:`<div class="hdl ${cls}" draggable="false"></div>`,iconSize:[0,0]});
-function hPos(h){return h.rot?apply(S.A,S.w/2,-S.h*0.06-0.04*S.w):apply(S.A,h.x,h.y)}
+function hPos(h){return h.rot?P(S.w/2,-S.h*0.06-0.04*S.w):P(h.x,h.y)}
 function drawHandles(){
   hLayer.clearLayers();handles=[];
   if(mode!=='edit'||!S.img||!S.visible)return;
@@ -355,7 +393,7 @@ function drawHandles(){
     d.mk=mk;handles.push(d);
     mk.on('dragstart',()=>{hDrag={d,prev:toM(mk.getLatLng())}});
     mk.on('drag',()=>{
-      const c=apply(S.A,S.w/2,S.h/2),m=toM(mk.getLatLng()),p0=hDrag.prev;
+      const c=P(S.w/2,S.h/2),m=toM(mk.getLatLng()),p0=hDrag.prev;
       if(d.rot){const a=Math.atan2(m[1]-c[1],m[0]-c[0])-Math.atan2(p0[1]-c[1],p0[0]-c[0]);transformAround(1,a*180/Math.PI,true)}
       else{const r0=Math.hypot(p0[0]-c[0],p0[1]-c[1]),r1=Math.hypot(m[0]-c[0],m[1]-c[1]);if(r0>0&&r1>0)transformAround(r1/r0,0,true)}
       hDrag.prev=m;
@@ -380,13 +418,13 @@ function drawAlign(){
   al.layer.clearLayers();
   al.pairs.forEach((p,k)=>{
     L.marker(toLL(p.real),{icon:aptIcon(k+1,'real'),interactive:false}).addTo(al.layer);
-    L.marker(toLL(apply(S.A,p.img[0],p.img[1])),{icon:aptIcon(k+1,'img'),interactive:false}).addTo(al.layer);
+    L.marker(toLL(P(p.img[0],p.img[1])),{icon:aptIcon(k+1,'img'),interactive:false}).addTo(al.layer);
   });
-  if(al.pending)L.marker(toLL(apply(S.A,al.pending[0],al.pending[1])),{icon:aptIcon(al.pairs.length+1,'img'),interactive:false}).addTo(al.layer);
+  if(al.pending)L.marker(toLL(P(al.pending[0],al.pending[1])),{icon:aptIcon(al.pairs.length+1,'img'),interactive:false}).addTo(al.layer);
 }
 function alignClick(e){
   const m=toM(e.latlng);
-  if(!al.pending){al.pending=inv(S.A,m)}
+  if(!al.pending){al.pending=invP(m)}
   else{al.pairs.push({img:al.pending,real:m});al.pending=null}
   drawAlign();alignMsg();
 }
@@ -414,8 +452,31 @@ function solve3(M,b){
     for(let r=0;r<3;r++)if(r!==c){const f=a[r][c]/a[c][c];for(let k=c;k<4;k++)a[r][k]-=f*a[c][k]}}
   return [a[0][3]/a[0][0],a[1][3]/a[1][1],a[2][3]/a[2][2]];
 }
-$('alignApply').onclick=()=>{const A=solve(al.pairs);if(!A){flash('目印が近すぎます。離れた場所を選んでください',3000);return}
-  S.A=A;render();save();const n=al.pairs.length;setMode(null);flash(`${n}組の目印で位置を合わせました`+(n>=3?'（歪みも補正）':''),3500)};
+$('alignApply').onclick=()=>{
+  const pairs=al.pairs.slice(),n=pairs.length;let H=null,kind;
+  if(n>=4){
+    H=fitH(pairs.map(p=>p.img),pairs.map(p=>p.real));
+    // 画像の四隅で向きが裏返る（点の配置が悪い）場合は使わない
+    if(H){const ws=[[0,0],[S.w,0],[S.w,S.h],[0,S.h]].map(([x,y])=>H[6]*x+H[7]*y+H[8]);if(!(ws.every(v=>v>0)||ws.every(v=>v<0)))H=null}
+  }
+  const A=solve(pairs);if(!A&&!H){flash('目印が近すぎます。離れた場所を選んでください',3000);return}
+  if(H){S.H=H;S.A=A||S.A;kind='遠近の歪みも補正'}else{S.H=null;S.A=A;kind=n>=3?'傾き・歪みも補正':'回転と縮尺を補正'}
+  render();save();setMode(null);showResiduals(pairs,kind);
+};
+/* 目印ごとのずれ（m）を地図とパネルに表示 */
+const resLayer=L.layerGroup().addTo(map);
+function showResiduals(pairs,kind){
+  resLayer.clearLayers();
+  const errs=pairs.map(p=>{const q=P(p.img[0],p.img[1]),lat=Math.cos(toLL(p.real).lat*Math.PI/180);return Math.hypot(q[0]-p.real[0],q[1]-p.real[1])*lat});
+  const n=pairs.length,params=S.H?8:n>=3?6:4,dof=n*2-params;
+  pairs.forEach((p,i)=>{L.marker(toLL(p.real),{icon:L.divIcon({className:'',html:`<div class="res ${errs[i]>20?'bad':''}">${i+1}：${errs[i]<1?'<1':Math.round(errs[i])}m</div>`,iconSize:[0,0]}),interactive:false}).addTo(resLayer)});
+  const mean=errs.reduce((a,b)=>a+b,0)/n,max=Math.max(...errs);
+  let msg=`${n}組の目印で合わせました（${kind}）。`;
+  if(dof<=0)msg+=`<br>この点数ではずれを測れません。${S.H?'5':n>=3?'4':'3'}点以上打つと、各目印のずれ（m）で合い具合を確認できます。`;
+  else msg+=`<br>目印のずれ：平均 <span class="score">${mean.toFixed(1)}m</span>・最大 <span class="score">${max.toFixed(1)}m</span>。`+
+    (max>20?'20mを超える目印は、打つ場所がずれているか、会場図自体の描き方が実際と違う可能性があります。':'よく合っています。');
+  autoUI(msg,100,true);$('autoKeep').hidden=false;$('autoUndo').hidden=true;$('autoFix').hidden=true;
+}
 $('alignUndo').onclick=()=>{if(al.pending)al.pending=null;else al.pairs.pop();drawAlign();alignMsg()};
 $('alignCancel').onclick=()=>setMode(null);
 
@@ -468,6 +529,7 @@ map.on('click',e=>{if(mode==='align')alignClick(e);else if(mode==='pin')pinClick
 
 /* ---------- modes & UI ---------- */
 function setMode(m){
+  if(m)resLayer.clearLayers();
   if(mode==='align'&&m!=='align'){al.pairs=[];al.pending=null;al.layer.clearLayers();imgEl.style.opacity=S.opacity}
   mode=(mode===m)?null:m;
   imgEl.classList.toggle('edit',mode==='edit');drawHandles();
@@ -482,7 +544,7 @@ function setMode(m){
 }
 function ui(){
   const has=!!S.img;
-  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn','autoBtn','snapBtn','wKm','rotDeg'].forEach(id=>$(id).disabled=!has);
+  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn','autoBtn','snapBtn','wKm','rotDeg','blinkBtn','linesBtn'].forEach(id=>$(id).disabled=!has);
   document.querySelectorAll('[data-rot],[data-scl]').forEach(b=>b.disabled=!has);
   $('toggleImg').textContent=S.visible?'表示中':'非表示';$('toggleImg').classList.toggle('on',has&&S.visible);
   $('fineBtn').classList.toggle('on',fine);
@@ -493,7 +555,7 @@ function status(t){$('status').hidden=!t;$('status').textContent=t}
 let ft;function flash(t,ms){status(t);clearTimeout(ft);ft=setTimeout(()=>status(mode==='edit'?'ドラッグで移動・四隅の■で拡大縮小・上の●で回転':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':''),ms)}
 
 $('file').onchange=e=>{loadFile(e.target.files[0]);e.target.value=''};
-$('clearImg').onclick=()=>{S.img=null;S.A=null;setMode(null);render();ui();save()};
+$('clearImg').onclick=()=>{stopCheck();S.img=null;S.A=null;S.H=null;setMode(null);render();ui();save()};
 $('editBtn').onclick=()=>setMode('edit');
 $('alignBtn').onclick=()=>setMode('align');
 $('pinBtn').onclick=()=>setMode('pin');
@@ -501,6 +563,41 @@ $('toggleImg').onclick=()=>{S.visible=!S.visible;render();drawHandles();ui();sav
 $('fineBtn').onclick=()=>{fine=!fine;ui()};
 document.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>transformAround(1,(fine?0.1:1)*b.dataset.rot));
 document.querySelectorAll('[data-scl]').forEach(b=>b.onclick=()=>transformAround(1+(fine?0.002:0.02)*b.dataset.scl,0));
+/* 確認ツール：点滅・線だけ表示 */
+let blinkT=null,edgeUrl=null,linesOn=false;
+function stopCheck(){if(blinkT){clearInterval(blinkT);blinkT=null}imgEl.style.visibility='';
+  if(linesOn){linesOn=false;if(S.img)imgEl.src=S.img}$('blinkBtn').classList.remove('on');$('linesBtn').classList.remove('on')}
+$('blinkBtn').onclick=()=>{
+  if(blinkT){clearInterval(blinkT);blinkT=null;imgEl.style.visibility='';$('blinkBtn').classList.remove('on');return}
+  S.visible=true;render();ui();
+  blinkT=setInterval(()=>{imgEl.style.visibility=imgEl.style.visibility==='hidden'?'':'hidden'},700);$('blinkBtn').classList.add('on');
+  flash('点滅中：道路・川・建物が点滅のたびに飛んで見える所はずれています',4000);
+};
+function makeEdges(){
+  const im=new Image();im.src=S.img;
+  return im.decode().then(()=>{
+    const k=Math.min(1,2000/Math.max(im.naturalWidth,im.naturalHeight)),w=Math.round(im.naturalWidth*k),h=Math.round(im.naturalHeight*k);
+    const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(im,0,0,w,h);
+    const d=x.getImageData(0,0,w,h),D=d.data,Lm=new Float32Array(w*h),G=new Float32Array(w*h);
+    for(let i=0;i<w*h;i++)Lm[i]=0.299*D[i*4]+0.587*D[i*4+1]+0.114*D[i*4+2];
+    const hist=new Uint32Array(256);
+    for(let y=1;y<h-1;y++)for(let xx=1;xx<w-1;xx++){const i=y*w+xx;
+      const gx=Lm[i-w+1]+2*Lm[i+1]+Lm[i+w+1]-Lm[i-w-1]-2*Lm[i-1]-Lm[i+w-1],gy=Lm[i+w-1]+2*Lm[i+w]+Lm[i+w+1]-Lm[i-w-1]-2*Lm[i-w]-Lm[i-w+1];
+      G[i]=Math.hypot(gx,gy);hist[Math.min(255,G[i]/4|0)]++}
+    let acc=0,lo=0,tot=(w-2)*(h-2);for(let b=0;b<256;b++){acc+=hist[b];if(acc>tot*0.80){lo=b*4;break}}
+    const hi=lo*3+1;
+    for(let i=0;i<w*h;i++){const a=Math.max(0,Math.min(1,(G[i]-lo)/(hi-lo)));D[i*4]=255;D[i*4+1]=30;D[i*4+2]=150;D[i*4+3]=a*255}
+    x.putImageData(d,0,0);return c.toDataURL('image/png');
+  });
+}
+$('linesBtn').onclick=async()=>{
+  if(linesOn){linesOn=false;imgEl.src=S.img;$('linesBtn').classList.remove('on');return}
+  S.visible=true;render();ui();
+  if(!edgeUrl){flash('線を抽出しています…',1500);try{edgeUrl=await makeEdges()}catch(_){flash('線を抽出できませんでした',3000);return}}
+  linesOn=true;imgEl.src=edgeUrl;$('linesBtn').classList.add('on');
+  if(S.base!=='photo')setBase('photo');
+  flash('会場図の線を航空写真に重ねています。道路や川の線がずれていないか見てください',4500);
+};
 $('wKm').onchange=e=>{const v=parseFloat(e.target.value);if(!(v>0))return readout();transformAround(v/geom().widthKm,0)};
 $('rotDeg').onchange=e=>{const v=parseFloat(e.target.value);if(isNaN(v))return readout();let d=v-geom().bearing;d=((d+540)%360)-180;transformAround(1,-d)};
 $('opacity').oninput=e=>{S.opacity=+e.target.value;render();ui();save()};
@@ -588,7 +685,7 @@ const refCache={};
 
 function fitToImage(){
   if(!S.img)return;
-  const pts=[[0,0],[S.w,0],[0,S.h],[S.w,S.h]].map(([x,y])=>toLL(apply(S.A,x,y)));
+  const pts=[[0,0],[S.w,0],[0,S.h],[S.w,S.h]].map(([x,y])=>toLL(P(x,y)));
   map.fitBounds(L.latLngBounds(pts),{padding:[20,20]});
 }
 
@@ -604,14 +701,16 @@ const MEMKEY='gx-align-memory';
 function memLoad(){try{return JSON.parse(localStorage.getItem(MEMKEY))||[]}catch(_){return []}}
 function norm(A,w,h){return [A[0]*w,A[1]*w,A[2]*h,A[3]*h,A[4],A[5]]}
 function denorm(An,w,h){return [An[0]/w,An[1]/w,An[2]/h,An[3]/h,An[4],An[5]]}
+const normH=(H,w,h)=>H&&[H[0]*w,H[1]*h,H[2],H[3]*w,H[4]*h,H[5],H[6]*w,H[7]*h,H[8]];
+const denormH=(H,w,h)=>H&&[H[0]/w,H[1]/h,H[2],H[3]/w,H[4]/h,H[5],H[6]/w,H[7]/h,H[8]];
 function ham(a,b){let n=0;for(let i=0;i<a.length;i++)if(a[i]!==b[i])n++;return n}
 function recall(hash,aspect){
   if(!hash)return null;
   return memLoad().find(m=>Math.abs(m.aspect-aspect)/aspect<0.01&&ham(m.hash,hash)<=5)||null;
 }
-function remember(hash,aspect,An){
+function remember(hash,aspect,An,Hn){
   const list=memLoad().filter(m=>!(Math.abs(m.aspect-aspect)/aspect<0.01&&ham(m.hash,hash)<=5));
-  list.unshift({hash,aspect,An});
+  list.unshift({hash,aspect,An,Hn:Hn||null});
   try{localStorage.setItem(MEMKEY,JSON.stringify(list.slice(0,20)))}catch(_){}
 }
 
@@ -847,7 +946,7 @@ function fineToA(ref,p,w,h){
   return [(m1[0]-m0[0])/w,(m1[1]-m0[1])/w,(m2[0]-m0[0])/h,(m2[1]-m0[1])/h,m0[0],m0[1]];
 }
 
-let autoPrevA=null;
+let autoPrevA=null,autoPrevH=null;
 const pause=()=>new Promise(r=>setTimeout(r,0));
 function autoUI(msg,pct,done){
   $('autoPanel').hidden=false;$('autoMsg').innerHTML=msg;
@@ -863,10 +962,10 @@ function aToFine(ref,A,w,h){
 const GOOD=0.2;
 async function autoAlign(local){
   if(!S.img||autoRunning)return;
-  autoRunning=true;setMode(null);autoPrevA=S.A.slice();$('autoKeep').hidden=false;
+  autoRunning=true;setMode(null);autoPrevA=S.A.slice();autoPrevH=S.H;if(S.H){S.A=approxA()||S.A}$('autoKeep').hidden=false;$('autoUndo').hidden=false;$('autoFix').hidden=false;
   $('autoBtn').disabled=true;$('snapBtn').disabled=true;
   try{
-    const img=imgEl;const w=img.naturalWidth,h=img.naturalHeight;
+    const img=new Image();img.src=S.img;await img.decode();const w=img.naturalWidth,h=img.naturalHeight;
     const bg=bgColor(img);
     autoUI('地理院地図を読み込んでいます…',2);
     const refs=[];let lastErr=null;
@@ -911,18 +1010,18 @@ async function autoAlign(local){
     }
     const sc=best.r;
     if(!local&&sc<GOOD){
-      S.A=autoPrevA;render();setMode('edit');
+      S.A=autoPrevA;S.H=autoPrevH;render();setMode('edit');
       autoUI(`自動では位置を決めきれませんでした（一致度 <span class="score">${sc.toFixed(2)}</span>）。会場図をドラッグ・回転・拡大縮小で<b>だいたい</b>重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。`,100,true);
       $('autoKeep').hidden=true;
       return;
     }
-    S.A=fineToA(best.ref,best.p,w,h);S.visible=true;render();if(!local)fitToImage();
+    S.A=fineToA(best.ref,best.p,w,h);S.H=null;S.visible=true;render();if(!local)fitToImage();
     const level=sc>=0.35?'高い':sc>=GOOD?'まあまあ':'低い';
     const deg=((best.p.t*180/Math.PI)%360+360)%360;
     autoUI(`${local?'近くを探して吸着させました':'自動で合わせました'}。一致度 <span class="score">${sc.toFixed(2)}</span>（${level}）・${best.ref.kind==='photo'?'航空写真':'標準地図'}と照合・図の上方向は北から時計回りに${deg.toFixed(0)}°。`+
       (sc<GOOD?'<br>自信が低いので、ずれていたら「元に戻す」か「目印で修正する」を使ってください。':'<br>透明度を変えて確認し、ずれていれば目印で修正できます。'),100,true);
   }catch(e){
-    S.A=autoPrevA;render();
+    S.A=autoPrevA;S.H=autoPrevH;render();
     const msg=e.message==='tainted'?'地図タイルの画像を読み取れなかったため、自動で合わせられませんでした。ブラウザでファイルを直接開いて試してください。'
       :e.message==='notile'?'地理院地図のタイルを取得できませんでした。インターネット接続を確認し、ファイルをChromeやSafariなどのブラウザで直接開いてください（Claudeアプリ内のプレビューでは地図を読み込めません）。'
       :'自動で合わせられませんでした。会場図をだいたい重ねてから「ここから自動微調整」を試すか、目印で合わせてください。';
@@ -934,29 +1033,29 @@ async function autoAlign(local){
 $('autoBtn').onclick=()=>autoAlign(false);
 $('snapBtn').onclick=()=>autoAlign(true);
 $('autoKeep').onclick=()=>{$('autoPanel').hidden=true;save();flash('位置を決定しました',2000)};
-$('autoUndo').onclick=()=>{if(autoPrevA){S.A=autoPrevA;render();save()}$('autoPanel').hidden=true;setMode('edit')};
+$('autoUndo').onclick=()=>{if(autoPrevA){S.A=autoPrevA;S.H=autoPrevH;render();save()}$('autoPanel').hidden=true;setMode('edit')};
 $('autoFix').onclick=()=>{$('autoPanel').hidden=true;setMode('align')};
 
 
 /* ---------- save / load ---------- */
 function save(){
-  if(S.img&&S.A&&S.hash&&!autoRunning)remember(S.hash,S.w/S.h,norm(S.A,S.w,S.h));
-  const data={v:1,img:S.img,hash:S.hash,w:S.w,h:S.h,A:S.A,opacity:S.opacity,visible:S.visible,base:S.base,pins:S.pins};
+  if(S.img&&S.A&&S.hash&&!autoRunning)remember(S.hash,S.w/S.h,norm(S.A,S.w,S.h),normH(S.H,S.w,S.h));
+  const data={v:1,img:S.img,hash:S.hash,w:S.w,h:S.h,A:S.A,H:S.H,opacity:S.opacity,visible:S.visible,base:S.base,pins:S.pins};
   try{localStorage.setItem(KEY,JSON.stringify(data));$('saveState').textContent='作業内容はこのブラウザに自動で保存されます。';$('saveState').className='hint'}
   catch(e){try{localStorage.setItem(KEY,JSON.stringify({...data,img:null}));
     $('saveState').textContent='画像が大きくてブラウザに保存できませんでした（位置とピンは保存済み）。「設定を書き出す」で画像ごと保存できます。';$('saveState').className='note alert'}catch(_){}}
 }
 function restore(d){
   if(!d)return;
-  S.opacity=d.opacity??.65;S.hash=d.hash||null;S.visible=d.visible??true;S.base=d.base||'photo';S.pins=Array.isArray(d.pins)?d.pins:[];
+  S.opacity=d.opacity??.65;S.hash=d.hash||null;S.H=d.H||null;S.visible=d.visible??true;S.base=d.base||'photo';S.pins=Array.isArray(d.pins)?d.pins:[];
   if(d.img&&d.A){S.img=d.img;S.w=d.w;S.h=d.h;S.A=d.A;imgEl.src=d.img}
   else if(d.A&&!d.img){S.img=null}
 }
 function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500)}
-$('saveJson').onclick=()=>download('greenexpo-overlay.json',JSON.stringify({v:1,img:S.img,w:S.w,h:S.h,A:S.A,opacity:S.opacity,visible:S.visible,base:S.base,pins:S.pins}),'application/json');
+$('saveJson').onclick=()=>download('greenexpo-overlay.json',JSON.stringify({v:1,img:S.img,hash:S.hash,w:S.w,h:S.h,A:S.A,H:S.H,opacity:S.opacity,visible:S.visible,base:S.base,pins:S.pins}),'application/json');
 $('loadJson').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const r=new FileReader();
   r.onload=()=>{try{const d=JSON.parse(r.result);restore(d);setBase(S.base);render();drawPins();listPins();ui();save();
-    if(S.img)map.fitBounds(L.latLngBounds([[0,0],[S.w,0],[0,S.h],[S.w,S.h]].map(([x,y])=>toLL(apply(S.A,x,y)))));
+    if(S.img)map.fitBounds(L.latLngBounds([[0,0],[S.w,0],[0,S.h],[S.w,S.h]].map(([x,y])=>toLL(P(x,y)))));
     flash('設定を読み込みました',2500)}catch(_){flash('読み込めませんでした。このツールで書き出したJSONを選んでください',4000)}};r.readAsText(f)};
 $('kmlBtn').onclick=()=>{
   const x=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
@@ -967,7 +1066,7 @@ $('kmlBtn').onclick=()=>{
 };
 $('resetAll').onclick=()=>{$('resetConfirm').hidden=false};
 $('resetNo').onclick=()=>{$('resetConfirm').hidden=true};
-$('resetYes').onclick=()=>{$('resetConfirm').hidden=true;S.img=null;S.A=null;S.pins=[];setMode(null);render();drawPins();listPins();ui();try{localStorage.removeItem(KEY)}catch(_){}};
+$('resetYes').onclick=()=>{$('resetConfirm').hidden=true;stopCheck();S.img=null;S.A=null;S.H=null;resLayer.clearLayers();S.pins=[];setMode(null);render();drawPins();listPins();ui();try{localStorage.removeItem(KEY)}catch(_){}};
 
 /* ---------- boot ---------- */
 try{restore(JSON.parse(localStorage.getItem(KEY)))}catch(_){}
