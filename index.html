@@ -81,6 +81,11 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .pop input{font:inherit;padding:6px 8px;border:1px solid #ccc;border-radius:6px;width:100%}
 .pop .row button{font-size:12px}
 .pop .num{color:#666}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
+.chk input{accent-color:var(--accent)}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.score{font-family:var(--mono);font-variant-numeric:tabular-nums}
 kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -116,6 +121,19 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
         <button data-scl="-1" disabled>− 縮小</button>
         <button data-scl="1" disabled>＋ 拡大</button>
         <button id="fineBtn" disabled title="回転・拡大の刻みを細かくする">微調整</button>
+      </div>
+      <div class="row">
+        <button class="primary" id="autoBtn" disabled>自動で合わせる</button>
+        <label class="chk"><input type="checkbox" id="autoOnLoad" checked> 読み込んだら自動で合わせる</label>
+      </div>
+      <div id="autoPanel" class="note" hidden>
+        <div id="autoMsg"></div>
+        <div class="bar" id="autoBarWrap"><i id="autoBar"></i></div>
+        <div class="row" id="autoActions" style="margin-top:6px" hidden>
+          <button id="autoKeep" class="primary">この位置で決定</button>
+          <button id="autoUndo">元に戻す</button>
+          <button id="autoFix">目印で修正する</button>
+        </div>
       </div>
       <label class="slider">透明度<input type="range" id="opacity" min="0.1" max="1" step="0.05" value="0.65"><span class="num" id="opv">65%</span></label>
       <div id="alignPanel" class="note" hidden>
@@ -238,9 +256,18 @@ function loadFile(file){
     const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');
     cx.fillStyle='#fff';cx.fillRect(0,0,w,h);cx.drawImage(im,0,0,w,h);
     let url;try{url=cv.toDataURL('image/webp',0.85);if(!url.startsWith('data:image/webp'))url=cv.toDataURL('image/jpeg',0.85)}catch(e){url=r.result}
-    setImage(url,w,h,null);
-    setMode('edit');
-    flash('会場図を置きました。ドラッグで移動するか「目印で合わせる」で位置を合わせてください',5000);
+    S.hash=dhash(cv);
+    const mem=recall(S.hash,w/h);
+    setImage(url,w,h,mem?denorm(mem.An,w,h):null);
+    if(mem){
+      fitToImage();
+      flash('前回この会場図で合わせた位置を復元しました',4000);
+    }else if($('autoOnLoad').checked){
+      (imgEl.decode?imgEl.decode():Promise.resolve()).catch(()=>{}).then(()=>autoAlign());
+    }else{
+      setMode('edit');
+      flash('会場図を置きました。「自動で合わせる」か、ドラッグ・目印で位置を合わせてください',5000);
+    }
   };im.src=r.result};
   r.readAsDataURL(file);
 }
