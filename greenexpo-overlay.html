@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>上瀬谷 会場重ね地図</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 左に操作パネル、右に地図（スマホは上が地図・下がパネル） */
+:root{
+  --bg:#f3f5ef; --panel:#ffffff; --fg:#1d2a22; --muted:#5d6b61; --line:#d9e0d6;
+  --accent:#2f7a4a; --accent-ink:#ffffff; --soft:#e6efe7; --mark:#c2307a; --warn:#a65a00;
+  --ui:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121814; --panel:#18201b; --fg:#e4ebe5; --muted:#9aa89e; --line:#2c3730;
+  --accent:#5fbf82; --accent-ink:#0d1a12; --soft:#213027; --mark:#ff6fb0; --warn:#f0a948; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--ui)}
+.app{height:100%;display:grid;grid-template-columns:360px 1fr}
+#map{height:100%;min-height:0;background:var(--soft)}
+.panel{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;min-height:0;
+  padding:18px max(16px,env(safe-area-inset-left,0px)) 24px 18px;display:flex;flex-direction:column;gap:18px}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr;grid-template-rows:58% 42%}
+  .panel{order:2;border-right:0;border-top:1px solid var(--line);
+    padding:14px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+}
+h1{font-size:18px;margin:0;line-height:1.3;text-wrap:balance;font-weight:700}
+.sub{color:var(--muted);font-size:12px;margin-top:2px}
+section{display:flex;flex-direction:column;gap:8px}
+h2{font-size:12px;letter-spacing:.08em;color:var(--muted);margin:0;font-weight:700;display:flex;align-items:center;gap:8px}
+h2 .n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:11px;letter-spacing:0}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+button,.btn{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+  border-radius:8px;padding:6px 10px;cursor:pointer;line-height:1.3;display:inline-flex;align-items:center;gap:4px}
+button:hover,.btn:hover{border-color:var(--accent)}
+button:focus-visible,.btn:focus-within,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+button.on{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:700}
+button:disabled{opacity:.45;cursor:not-allowed}
+.btn input{display:none}
+.hint{font-size:12px;color:var(--muted)}
+.note{font-size:12px;background:var(--soft);border-radius:8px;padding:8px 10px}
+.note.alert{color:var(--warn)}
+a{color:var(--accent)}
+label.slider{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:13px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.num{font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;flex:1;justify-content:center}
+.seg button+button{border-left:1px solid var(--line)}
+.pins{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.pins li{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);min-width:0}
+.pins li .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.pins li .nm:hover{color:var(--accent)}
+.pins li button{padding:3px 7px;font-size:12px}
+.empty{color:var(--muted);font-size:12px;padding:6px 0}
+.status{position:absolute;z-index:800;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));
+  background:var(--panel);color:var(--fg);border:1px solid var(--accent);border-radius:999px;padding:6px 14px;font-size:13px;
+  box-shadow:0 4px 14px rgba(0,0,0,.18);max-width:calc(100% - 120px);text-align:center}
+.mapwrap{position:relative;min-height:0}
+.mapwrap #map{position:absolute;inset:0}
+.drop{position:absolute;inset:0;z-index:900;display:grid;place-items:center;background:rgba(47,122,74,.25);
+  border:3px dashed var(--accent);font-size:18px;font-weight:700;color:var(--fg);pointer-events:none}
+/* overlay image */
+.leaflet-mapimg-pane img.ov{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none!important;user-select:none;-webkit-user-drag:none;pointer-events:none}
+.leaflet-mapimg-pane img.ov.edit{pointer-events:auto;cursor:move;outline:2px dashed var(--mark);touch-action:none}
+/* pin labels */
+.pin{display:flex;align-items:center;gap:4px;white-space:nowrap;transform:translate(-7px,-7px)}
+.pin i{width:14px;height:14px;border-radius:50%;background:var(--mark);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);flex:none}
+.pin b{font:500 12px var(--ui);background:rgba(255,255,255,.92);color:#1d2a22;padding:1px 6px;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.apt{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font:700 12px var(--mono);color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);transform:translate(-11px,-11px)}
+.apt.img{background:#e07b00}.apt.real{background:#1f6fd1}
+.leaflet-popup-content{font-family:var(--ui)}
+.pop{display:flex;flex-direction:column;gap:6px;min-width:200px}
+.pop input{font:inherit;padding:6px 8px;border:1px solid #ccc;border-radius:6px;width:100%}
+.pop .row button{font-size:12px}
+.pop .num{color:#666}
+kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <div>
+      <h1>上瀬谷 会場重ね地図</h1>
+      <div class="sub">GREEN×EXPO 2027 の会場図を実際の地図に重ねて、どこに何が建つか確かめるツール</div>
+    </div>
+
+    <section>
+      <h2><span class="n">1</span>会場図を読み込む</h2>
+      <div class="row">
+        <label class="btn" id="fileBtn">画像を選ぶ<input type="file" id="file" accept="image/*"></label>
+        <button id="clearImg" disabled>画像を外す</button>
+      </div>
+      <div class="hint">地図にドラッグ&ドロップ、またはスクリーンショットを <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けても読み込めます。PDFは画像に書き出してから使ってください。</div>
+      <div class="note">公式の会場図（2026年10月9日更新）：<a href="https://expo2027yokohama.or.jp/news/detail/001585.html" target="_blank" rel="noopener">GREEN×EXPO 2027 会場図を更新しました</a></div>
+    </section>
+
+    <section>
+      <h2><span class="n">2</span>位置を合わせる</h2>
+      <div class="row">
+        <button id="editBtn" disabled>ドラッグで移動</button>
+        <button id="alignBtn" disabled>目印で合わせる</button>
+        <button id="toggleImg" disabled>表示中</button>
+      </div>
+      <div class="row" aria-label="回転と拡大縮小">
+        <button data-rot="1" disabled title="左に回転">⟲ 回転</button>
+        <button data-rot="-1" disabled title="右に回転">⟳ 回転</button>
+        <button data-scl="-1" disabled>− 縮小</button>
+        <button data-scl="1" disabled>＋ 拡大</button>
+        <button id="fineBtn" disabled title="回転・拡大の刻みを細かくする">微調整</button>
+      </div>
+      <label class="slider">透明度<input type="range" id="opacity" min="0.1" max="1" step="0.05" value="0.65"><span class="num" id="opv">65%</span></label>
+      <div id="alignPanel" class="note" hidden>
+        <div id="alignMsg"></div>
+        <div class="row" style="margin-top:6px">
+          <button class="primary" id="alignApply" disabled>この目印で合わせる</button>
+          <button id="alignUndo" disabled>1つ戻す</button>
+          <button id="alignCancel">やめる</button>
+        </div>
+      </div>
+      <div class="hint">目印は交差点・川の曲がり角・既存の建物など、会場図と航空写真の両方で分かる場所を選ぶと正確です。2点で回転と縮尺、3点以上で歪みも補正します。キー操作：矢印で移動（<kbd>Shift</kbd>で細かく）、<kbd>[</kbd> <kbd>]</kbd> で回転、<kbd>-</kbd> <kbd>+</kbd> で拡大縮小。</div>
+    </section>
+
+    <section>
+      <h2><span class="n">3</span>パビリオンにピンを立てる</h2>
+      <div class="row">
+        <button id="pinBtn">地図をタップしてピン追加</button>
+        <button id="kmlBtn" disabled>KMLで書き出す</button>
+      </div>
+      <ul class="pins" id="pinList"></ul>
+      <div class="hint">書き出したKMLは Googleマイマップ（mymaps.google.com）にインポートすると、スマホのGoogleマップでも見られます。</div>
+    </section>
+
+    <section>
+      <h2><span class="n">4</span>背景の地図</h2>
+      <div class="seg" role="group" aria-label="背景地図">
+        <button data-base="photo" class="on">航空写真</button>
+        <button data-base="std">標準地図</button>
+        <button data-base="pale">淡色地図</button>
+      </div>
+      <div class="row">
+        <button id="homeBtn">会場周辺へ戻る</button>
+        <button id="locBtn">現在地</button>
+        <a class="btn" id="gmapLink" href="#" target="_blank" rel="noopener">この場所をGoogleマップで開く</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>保存と共有</h2>
+      <div class="row">
+        <button id="saveJson">設定を書き出す</button>
+        <label class="btn">設定を読み込む<input type="file" id="loadJson" accept=".json,application/json"></label>
+        <button id="resetAll">すべて消す</button>
+      </div>
+      <div id="resetConfirm" class="note alert" hidden>
+        画像・位置合わせ・ピンをすべて消します。
+        <div class="row" style="margin-top:6px"><button id="resetYes">消す</button><button id="resetNo">やめる</button></div>
+      </div>
+      <div class="hint" id="saveState">作業内容はこのブラウザに自動で保存されます。</div>
+    </section>
+  </aside>
+  <div class="mapwrap">
+    <div id="map"></div>
+    <div class="status" id="status" hidden></div>
+    <div class="drop" id="drop" hidden>ここにドロップして会場図を読み込む</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+(function(){
+const KEY='gx-overlay-v1';
+const HOME=[35.4875,139.4985], HOME_Z=15;
+const PRESETS=['メインゲート','メインホール','かながわ館（Vibrant INOCHI Forest）','つなぐ横浜館','西GXビレッジ','東GXビレッジ','国際ゾーン','ワールドプラザ','農と食ビレッジ','旧覆土式火薬庫','クラフトビレッジ','キッズビレッジ','テーマ館「ねっこ」','屋内出展施設「はなめぐり」','シンボル広場','フェスティバルステージ','日本政府苑','園芸文化館「いろはにわ」','里山ビレッジ','つなぐ横浜フィールド','null⁴（テトラヌル）','UR GREEN TABLE','とうきゅうグループ館','KT GROUP Mobi+','NTT EAST館『well』','大林組 モリソラミライ','三菱みんなの未来館','KAJIMA TREE','大和ハウスグループ エンドレスハートパーク','やさしくなりたい。STUDIO','竹中グループ くるくるく','住友林業館『ひゃくの森』','SOTETSU PARK','シミズ 森のまち','マクニカ グリーンテック メッセ'];
+
+const crs=L.CRS.EPSG3857;
+const map=L.map('map',{maxZoom:20,zoomControl:true}).setView(HOME,HOME_Z);
+const attr='<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
+const bases={
+  photo:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',{maxNativeZoom:18,maxZoom:20,attribution:attr}),
+  std:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:20,attribution:attr}),
+  pale:L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:20,attribution:attr})
+};
+
+const S={img:null,w:0,h:0,A:null,opacity:.65,visible:true,base:'photo',pins:[]};
+let mode=null; // 'edit' | 'align' | 'pin'
+let fine=false;
+const $=id=>document.getElementById(id);
+
+/* ---------- overlay ---------- */
+map.createPane('mapimg'); const pane=map.getPane('mapimg'); pane.style.zIndex=350;
+const imgEl=document.createElement('img'); imgEl.className='ov'; imgEl.alt=''; imgEl.draggable=false; imgEl.hidden=true; pane.appendChild(imgEl);
+
+const toM=ll=>{const p=crs.project(ll);return [p.x,p.y]};
+const toLL=m=>crs.unproject(L.point(m[0],m[1]));
+const apply=(A,x,y)=>[A[0]*x+A[2]*y+A[4],A[1]*x+A[3]*y+A[5]];
+function inv(A,m){const det=A[0]*A[3]-A[2]*A[1];const X=m[0]-A[4],Y=m[1]-A[5];return [(A[3]*X-A[2]*Y)/det,(-A[1]*X+A[0]*Y)/det]}
+
+function render(){
+  const show=S.img&&S.visible;
+  imgEl.hidden=!show; if(!show) return;
+  const lp=m=>map.latLngToLayerPoint(toLL(m));
+  const p0=lp(apply(S.A,0,0)),p1=lp(apply(S.A,S.w,0)),p2=lp(apply(S.A,0,S.h));
+  imgEl.style.width=S.w+'px'; imgEl.style.height=S.h+'px';
+  imgEl.style.transform=`matrix(${(p1.x-p0.x)/S.w},${(p1.y-p0.y)/S.w},${(p2.x-p0.x)/S.h},${(p2.y-p0.y)/S.h},${p0.x},${p0.y})`;
+  imgEl.style.opacity=S.opacity;
+}
+map.on('zoomstart',()=>{pane.style.visibility='hidden'});
+map.on('zoomend viewreset',()=>{render();pane.style.visibility=''});
+
+function defaultA(w,h){
+  const c=toM(map.getCenter());
+  const lat=map.getCenter().lat*Math.PI/180;
+  const widthM=Math.min(1800, map.distance(map.getBounds().getNorthWest(),map.getBounds().getNorthEast())*0.8)/Math.cos(lat);
+  const s=widthM/w;
+  return [s,0,0,-s,c[0]-s*w/2,c[1]+s*h/2];
+}
+
+function setImage(dataUrl,w,h,A){
+  S.img=dataUrl;S.w=w;S.h=h;S.A=A||defaultA(w,h);S.visible=true;
+  imgEl.src=dataUrl; render(); ui(); save();
+}
+
+function loadFile(file){
+  if(!file||!file.type.startsWith('image/')){flash('画像ファイル（PNG・JPEGなど）を選んでください',3000);return}
+  const r=new FileReader();
+  r.onload=()=>{const im=new Image();im.onload=()=>{
+    const MAX=3200;let w=im.naturalWidth,h=im.naturalHeight;const k=Math.min(1,MAX/Math.max(w,h));
+    w=Math.round(w*k);h=Math.round(h*k);
+    const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');
+    cx.fillStyle='#fff';cx.fillRect(0,0,w,h);cx.drawImage(im,0,0,w,h);
+    let url;try{url=cv.toDataURL('image/webp',0.85);if(!url.startsWith('data:image/webp'))url=cv.toDataURL('image/jpeg',0.85)}catch(e){url=r.result}
+    setImage(url,w,h,null);
+    setMode('edit');
+    flash('会場図を置きました。ドラッグで移動するか「目印で合わせる」で位置を合わせてください',5000);
+  };im.src=r.result};
+  r.readAsDataURL(file);
+}
+
+/* similarity / scale / rotate around image center (in mercator meters) */
+function transformAround(scale,angDeg){
+  if(!S.img)return;
+  const c=apply(S.A,S.w/2,S.h/2),t=angDeg*Math.PI/180,co=Math.cos(t)*scale,si=Math.sin(t)*scale;
+  const A=S.A,R=(x,y)=>[co*x-si*y,si*x+co*y];
+  const c1=R(A[0],A[1]),c2=R(A[2],A[3]),tr=R(A[4]-c[0],A[5]-c[1]);
+  S.A=[c1[0],c1[1],c2[0],c2[1],tr[0]+c[0],tr[1]+c[1]];render();save();
+}
+function moveBy(dx,dy){if(!S.img)return;S.A[4]+=dx;S.A[5]+=dy;render();save()}
+
+/* drag */
+let drag=null;
+imgEl.addEventListener('pointerdown',e=>{
+  if(mode!=='edit')return;e.preventDefault();e.stopPropagation();
+  map.dragging.disable();imgEl.setPointerCapture(e.pointerId);
+  drag={m:toM(map.mouseEventToLatLng(e))};
+});
+imgEl.addEventListener('pointermove',e=>{
+  if(!drag)return;const m=toM(map.mouseEventToLatLng(e));
+  S.A[4]+=m[0]-drag.m[0];S.A[5]+=m[1]-drag.m[1];drag.m=m;render();
+});
+const endDrag=e=>{if(!drag)return;drag=null;map.dragging.enable();save()};
+imgEl.addEventListener('pointerup',endDrag);imgEl.addEventListener('pointercancel',endDrag);
+
+/* ---------- alignment by landmarks ---------- */
+let al={pairs:[],pending:null,layer:L.layerGroup().addTo(map)};
+function aptIcon(n,cls){return L.divIcon({className:'',html:`<div class="apt ${cls}">${n}</div>`,iconSize:[0,0]})}
+function alignMsg(){
+  const n=al.pairs.length, i=n+1;
+  $('alignMsg').innerHTML = al.pending
+    ? `<b>目印${i}：</b>その場所が<b>実際の地図（航空写真）</b>ではどこか、タップしてください。<span class="hint">（青の${i}）</span>`
+    : `<b>目印${i}：</b>会場図の上で、分かりやすい場所をタップしてください。<span class="hint">（橙の${i}）</span>`+(n>=2?`<br>目印は${n}組。このまま合わせることもできます。`:'');
+  $('alignApply').disabled=n<2; $('alignUndo').disabled=!n&&!al.pending;
+  imgEl.style.opacity = al.pending ? Math.min(S.opacity,.35) : S.opacity;
+}
+function drawAlign(){
+  al.layer.clearLayers();
+  al.pairs.forEach((p,k)=>{
+    L.marker(toLL(p.real),{icon:aptIcon(k+1,'real'),interactive:false}).addTo(al.layer);
+    L.marker(toLL(apply(S.A,p.img[0],p.img[1])),{icon:aptIcon(k+1,'img'),interactive:false}).addTo(al.layer);
+  });
+  if(al.pending)L.marker(toLL(apply(S.A,al.pending[0],al.pending[1])),{icon:aptIcon(al.pairs.length+1,'img'),interactive:false}).addTo(al.layer);
+}
+function alignClick(e){
+  const m=toM(e.latlng);
+  if(!al.pending){al.pending=inv(S.A,m)}
+  else{al.pairs.push({img:al.pending,real:m});al.pending=null}
+  drawAlign();alignMsg();
+}
+function solve(pairs){
+  if(pairs.length>=3){
+    // affine least squares: [x y 1] -> X, Y
+    const N=[[0,0,0],[0,0,0],[0,0,0]],bx=[0,0,0],by=[0,0,0];
+    pairs.forEach(p=>{const v=[p.img[0],p.img[1],1];for(let i=0;i<3;i++){for(let j=0;j<3;j++)N[i][j]+=v[i]*v[j];bx[i]+=v[i]*p.real[0];by[i]+=v[i]*p.real[1]}});
+    const sx=solve3(N,bx),sy=solve3(N,by);
+    if(sx&&sy)return [sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]];
+  }
+  // similarity (complex LS), image y flipped: z = a*(x - i y) + b
+  const n=pairs.length;let wx=0,wy=0,zx=0,zy=0;
+  pairs.forEach(p=>{wx+=p.img[0];wy+=-p.img[1];zx+=p.real[0];zy+=p.real[1]});wx/=n;wy/=n;zx/=n;zy/=n;
+  let nr=0,ni=0,d=0;
+  pairs.forEach(p=>{const ax=p.img[0]-wx,ay=-p.img[1]-wy,bx=p.real[0]-zx,by=p.real[1]-zy;nr+=bx*ax+by*ay;ni+=by*ax-bx*ay;d+=ax*ax+ay*ay});
+  if(!d)return null;
+  const pr=nr/d,pi=ni/d,br=zx-(pr*wx-pi*wy),bi=zy-(pr*wy+pi*wx);
+  return [pr,pi,pi,-pr,br,bi];
+}
+function solve3(M,b){
+  const a=M.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<3;c++){let p=c;for(let r=c+1;r<3;r++)if(Math.abs(a[r][c])>Math.abs(a[p][c]))p=r;
+    if(Math.abs(a[p][c])<1e-12)return null;[a[c],a[p]]=[a[p],a[c]];
+    for(let r=0;r<3;r++)if(r!==c){const f=a[r][c]/a[c][c];for(let k=c;k<4;k++)a[r][k]-=f*a[c][k]}}
+  return [a[0][3]/a[0][0],a[1][3]/a[1][1],a[2][3]/a[2][2]];
+}
+$('alignApply').onclick=()=>{const A=solve(al.pairs);if(!A){flash('目印が近すぎます。離れた場所を選んでください',3000);return}
+  S.A=A;render();save();const n=al.pairs.length;setMode(null);flash(`${n}組の目印で位置を合わせました`+(n>=3?'（歪みも補正）':''),3500)};
+$('alignUndo').onclick=()=>{if(al.pending)al.pending=null;else al.pairs.pop();drawAlign();alignMsg()};
+$('alignCancel').onclick=()=>setMode(null);
+
+/* ---------- pins ---------- */
+const pinLayer=L.layerGroup().addTo(map);
+const dl=document.createElement('datalist');dl.id='presets';PRESETS.forEach(p=>{const o=document.createElement('option');o.value=p;dl.appendChild(o)});document.body.appendChild(dl);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const gmap=(lat,lng)=>`https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lng.toFixed(6)}`;
+function pinIcon(name){return L.divIcon({className:'',html:`<div class="pin"><i></i><b>${esc(name)}</b></div>`,iconSize:[0,0]})}
+function drawPins(){
+  pinLayer.clearLayers();
+  S.pins.forEach(p=>{
+    const mk=L.marker([p.lat,p.lng],{icon:pinIcon(p.name),draggable:true}).addTo(pinLayer);
+    mk.on('dragend',()=>{const ll=mk.getLatLng();p.lat=ll.lat;p.lng=ll.lng;save();listPins()});
+    mk.bindPopup(()=>{
+      const d=document.createElement('div');d.className='pop';
+      d.innerHTML=`<b>${esc(p.name)}</b><span class="num">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}</span>
+        <div class="row"><a href="${gmap(p.lat,p.lng)}" target="_blank" rel="noopener">Googleマップで開く</a></div>
+        <div class="row"><button data-a="del">ピンを削除</button></div>`;
+      d.querySelector('[data-a=del]').onclick=()=>{S.pins=S.pins.filter(q=>q!==p);map.closePopup();drawPins();listPins();save()};
+      return d;
+    });
+  });
+}
+function listPins(){
+  const ul=$('pinList');ul.innerHTML='';
+  if(!S.pins.length){ul.innerHTML='<li class="empty" style="display:block">まだピンはありません。会場図を合わせてから、パビリオンの位置にピンを立ててください。</li>'}
+  S.pins.forEach(p=>{
+    const li=document.createElement('li');
+    li.innerHTML=`<span class="nm" title="${esc(p.name)}">${esc(p.name)}</span><a class="btn" style="padding:3px 7px;font-size:12px" href="${gmap(p.lat,p.lng)}" target="_blank" rel="noopener">Gマップ</a><button>削除</button>`;
+    li.querySelector('.nm').onclick=()=>map.flyTo([p.lat,p.lng],Math.max(map.getZoom(),17));
+    li.querySelector('button').onclick=()=>{S.pins=S.pins.filter(q=>q!==p);drawPins();listPins();save()};
+    ul.appendChild(li);
+  });
+  $('kmlBtn').disabled=!S.pins.length;
+}
+function pinClick(e){
+  const ll=e.latlng,d=document.createElement('div');d.className='pop';
+  d.innerHTML=`<b>ピンの名前</b><input id="pinName" list="presets" placeholder="例：テーマ館「ねっこ」" autocomplete="off">
+    <div class="row"><button class="primary" data-a="ok">追加</button><button data-a="no">やめる</button></div>`;
+  const pop=L.popup({closeOnClick:false}).setLatLng(ll).setContent(d).openOn(map);
+  const inp=d.querySelector('input');setTimeout(()=>inp.focus(),50);
+  const ok=()=>{const name=inp.value.trim();if(!name){inp.focus();return}
+    S.pins.push({id:Date.now()+Math.random(),name,lat:ll.lat,lng:ll.lng});map.closePopup(pop);drawPins();listPins();save()};
+  d.querySelector('[data-a=ok]').onclick=ok;inp.addEventListener('keydown',ev=>{if(ev.key==='Enter')ok()});
+  d.querySelector('[data-a=no]').onclick=()=>map.closePopup(pop);
+}
+
+map.on('click',e=>{if(mode==='align')alignClick(e);else if(mode==='pin')pinClick(e)});
+
+/* ---------- modes & UI ---------- */
+function setMode(m){
+  if(mode==='align'&&m!=='align'){al.pairs=[];al.pending=null;al.layer.clearLayers();imgEl.style.opacity=S.opacity}
+  mode=(mode===m)?null:m;
+  imgEl.classList.toggle('edit',mode==='edit');
+  $('editBtn').classList.toggle('on',mode==='edit');
+  $('alignBtn').classList.toggle('on',mode==='align');
+  $('pinBtn').classList.toggle('on',mode==='pin');
+  $('alignPanel').hidden=mode!=='align';
+  map.getContainer().style.cursor=(mode==='align'||mode==='pin')?'crosshair':'';
+  if(mode==='align'){S.visible=true;render();alignMsg()}
+  status(mode==='edit'?'会場図をドラッグして移動できます':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':'');
+  ui();
+}
+function ui(){
+  const has=!!S.img;
+  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn'].forEach(id=>$(id).disabled=!has);
+  document.querySelectorAll('[data-rot],[data-scl]').forEach(b=>b.disabled=!has);
+  $('toggleImg').textContent=S.visible?'表示中':'非表示';$('toggleImg').classList.toggle('on',has&&S.visible);
+  $('fineBtn').classList.toggle('on',fine);
+  $('opacity').value=S.opacity;$('opv').textContent=Math.round(S.opacity*100)+'%';
+  document.querySelectorAll('[data-base]').forEach(b=>b.classList.toggle('on',b.dataset.base===S.base));
+}
+function status(t){$('status').hidden=!t;$('status').textContent=t}
+let ft;function flash(t,ms){status(t);clearTimeout(ft);ft=setTimeout(()=>status(mode==='edit'?'会場図をドラッグして移動できます':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':''),ms)}
+
+$('file').onchange=e=>{loadFile(e.target.files[0]);e.target.value=''};
+$('clearImg').onclick=()=>{S.img=null;S.A=null;setMode(null);render();ui();save()};
+$('editBtn').onclick=()=>setMode('edit');
+$('alignBtn').onclick=()=>setMode('align');
+$('pinBtn').onclick=()=>setMode('pin');
+$('toggleImg').onclick=()=>{S.visible=!S.visible;render();ui();save()};
+$('fineBtn').onclick=()=>{fine=!fine;ui()};
+document.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>transformAround(1,(fine?0.1:1)*b.dataset.rot));
+document.querySelectorAll('[data-scl]').forEach(b=>b.onclick=()=>transformAround(1+(fine?0.002:0.02)*b.dataset.scl,0));
+$('opacity').oninput=e=>{S.opacity=+e.target.value;render();ui();save()};
+document.querySelectorAll('[data-base]').forEach(b=>b.onclick=()=>setBase(b.dataset.base));
+function setBase(k){Object.values(bases).forEach(l=>map.removeLayer(l));bases[k].addTo(map);S.base=k;ui();save()}
+$('homeBtn').onclick=()=>map.flyTo(HOME,HOME_Z);
+$('locBtn').onclick=()=>{map.locate({setView:true,maxZoom:17});};
+map.on('locationerror',()=>flash('現在地を取得できませんでした。ブラウザの位置情報の許可を確認してください',4000));
+let locMk;map.on('locationfound',e=>{if(locMk)map.removeLayer(locMk);locMk=L.circleMarker(e.latlng,{radius:7,color:'#fff',weight:2,fillColor:'#1f6fd1',fillOpacity:1}).addTo(map)});
+function updG(){const c=map.getCenter();$('gmapLink').href=`https://www.google.com/maps/@${c.lat.toFixed(6)},${c.lng.toFixed(6)},${map.getZoom()}z/data=!3m1!1e3`}
+map.on('moveend',updG);
+
+/* keyboard */
+document.addEventListener('keydown',e=>{
+  if(!S.img||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;
+  const lat=map.getCenter().lat*Math.PI/180,step=(e.shiftKey?1:10)/Math.cos(lat);
+  const k=e.key;let done=true;
+  if(mode==='edit'&&k==='ArrowLeft')moveBy(-step,0);
+  else if(mode==='edit'&&k==='ArrowRight')moveBy(step,0);
+  else if(mode==='edit'&&k==='ArrowUp')moveBy(0,step);
+  else if(mode==='edit'&&k==='ArrowDown')moveBy(0,-step);
+  else if(k==='[')transformAround(1,e.shiftKey?0.1:1);
+  else if(k===']')transformAround(1,e.shiftKey?-0.1:-1);
+  else if(k==='-')transformAround(e.shiftKey?0.998:0.98,0);
+  else if(k==='+'||k===';'||k==='=')transformAround(e.shiftKey?1.002:1.02,0);
+  else if(k==='Escape')setMode(null);
+  else done=false;
+  if(done)e.preventDefault();
+});
+
+/* drop & paste */
+const wrap=document.querySelector('.mapwrap');let dc=0;
+wrap.addEventListener('dragenter',e=>{if([...e.dataTransfer.types].includes('Files')){dc++;$('drop').hidden=false;e.preventDefault()}});
+wrap.addEventListener('dragover',e=>e.preventDefault());
+wrap.addEventListener('dragleave',()=>{if(--dc<=0){dc=0;$('drop').hidden=true}});
+wrap.addEventListener('drop',e=>{e.preventDefault();dc=0;$('drop').hidden=true;const f=e.dataTransfer.files[0];if(f)loadFile(f)});
+document.addEventListener('paste',e=>{const it=[...(e.clipboardData||{}).items||[]].find(i=>i.type.startsWith('image/'));if(it){e.preventDefault();loadFile(it.getAsFile())}});
+
+/* ---------- save / load ---------- */
+function save(){
+  const data={v:1,img:S.img,w:S.w,h:S.h,A:S.A,opacity:S.opacity,visible:S.visible,base:S.base,pins:S.pins};
+  try{localStorage.setItem(KEY,JSON.stringify(data));$('saveState').textContent='作業内容はこのブラウザに自動で保存されます。';$('saveState').className='hint'}
+  catch(e){try{localStorage.setItem(KEY,JSON.stringify({...data,img:null}));
+    $('saveState').textContent='画像が大きくてブラウザに保存できませんでした（位置とピンは保存済み）。「設定を書き出す」で画像ごと保存できます。';$('saveState').className='note alert'}catch(_){}}
+}
+function restore(d){
+  if(!d)return;
+  S.opacity=d.opacity??.65;S.visible=d.visible??true;S.base=d.base||'photo';S.pins=Array.isArray(d.pins)?d.pins:[];
+  if(d.img&&d.A){S.img=d.img;S.w=d.w;S.h=d.h;S.A=d.A;imgEl.src=d.img}
+  else if(d.A&&!d.img){S.img=null}
+}
+function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500)}
+$('saveJson').onclick=()=>download('greenexpo-overlay.json',JSON.stringify({v:1,img:S.img,w:S.w,h:S.h,A:S.A,opacity:S.opacity,visible:S.visible,base:S.base,pins:S.pins}),'application/json');
+$('loadJson').onchange=e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{const d=JSON.parse(r.result);restore(d);setBase(S.base);render();drawPins();listPins();ui();save();
+    if(S.img)map.fitBounds(L.latLngBounds([[0,0],[S.w,0],[0,S.h],[S.w,S.h]].map(([x,y])=>toLL(apply(S.A,x,y)))));
+    flash('設定を読み込みました',2500)}catch(_){flash('読み込めませんでした。このツールで書き出したJSONを選んでください',4000)}};r.readAsText(f)};
+$('kmlBtn').onclick=()=>{
+  const x=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>GREEN×EXPO 2027 パビリオン</name>\n`+
+    S.pins.map(p=>`<Placemark><name>${x(p.name)}</name><Point><coordinates>${p.lng.toFixed(7)},${p.lat.toFixed(7)},0</coordinates></Point></Placemark>`).join('\n')+
+    `\n</Document></kml>`;
+  download('greenexpo-pavilions.kml',kml,'application/vnd.google-earth.kml+xml');
+};
+$('resetAll').onclick=()=>{$('resetConfirm').hidden=false};
+$('resetNo').onclick=()=>{$('resetConfirm').hidden=true};
+$('resetYes').onclick=()=>{$('resetConfirm').hidden=true;S.img=null;S.A=null;S.pins=[];setMode(null);render();drawPins();listPins();ui();try{localStorage.removeItem(KEY)}catch(_){}};
+
+/* ---------- boot ---------- */
+try{restore(JSON.parse(localStorage.getItem(KEY)))}catch(_){}
+bases[S.base].addTo(map);
+render();drawPins();listPins();ui();updG();
+if(!S.img)status('まず会場図の画像を読み込んでください（ドロップ・貼り付けもOK）');
+})();
+</script>
+</body>
+</html>
