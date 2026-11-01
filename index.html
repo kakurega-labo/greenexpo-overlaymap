@@ -236,8 +236,11 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
 <script>
 (function(){
 const KEY='gx-overlay-v1';
-const HOME=[35.4864,139.4904], HOME_Z=15; // 旧上瀬谷通信施設の中心（Wikipedia記載の座標）
-const SITE_R=1600; // 会場図の中心はこの距離（m）以内にあるはず
+// GREEN×EXPO 2027 開催地の中心の目安。旧上瀬谷通信施設の座標（35.4864,139.4904）・瀬谷駅の座標・
+// 現地の「海軍道路位置図」（開催地は施設の南東部、海軍道路の東で環状4号線をまたぐ）から推定
+const HOME=[35.4823,139.4950], HOME_Z=15;
+const SITE_R=1600;   // 会場図の中心はこの距離（m）以内にあるはず
+const VENUE_W=1500;  // 開催地の東西の幅の目安（m）
 const PRESETS=['メインゲート','メインホール','かながわ館（Vibrant INOCHI Forest）','つなぐ横浜館','西GXビレッジ','東GXビレッジ','国際ゾーン','ワールドプラザ','農と食ビレッジ','旧覆土式火薬庫','クラフトビレッジ','キッズビレッジ','テーマ館「ねっこ」','屋内出展施設「はなめぐり」','シンボル広場','フェスティバルステージ','日本政府苑','園芸文化館「いろはにわ」','里山ビレッジ','つなぐ横浜フィールド','null⁴（テトラヌル）','UR GREEN TABLE','とうきゅうグループ館','KT GROUP Mobi+','NTT EAST館『well』','大林組 モリソラミライ','三菱みんなの未来館','KAJIMA TREE','大和ハウスグループ エンドレスハートパーク','やさしくなりたい。STUDIO','竹中グループ くるくるく','住友林業館『ひゃくの森』','SOTETSU PARK','シミズ 森のまち','マクニカ グリーンテック メッセ'];
 
 const crs=L.CRS.EPSG3857;
@@ -333,6 +336,12 @@ function render(){
 map.on('zoomstart',()=>{pane.style.visibility='hidden'});
 map.on('zoomend viewreset',()=>{render();pane.style.visibility=''});
 
+/* 目安の初期配置：会場図の地図部分を開催地の幅（約1.5km）にして、開催地の中心・北が上に置く */
+function priorA(src,w,h){
+  try{const cb=contentBox(src,bgColor(src)),cw=Math.max(1,cb.x1-cb.x0),lat=Math.cos(HOME[0]*Math.PI/180);
+    const s=VENUE_W/cw/lat,hm=toM(L.latLng(HOME)),cx=(cb.x0+cb.x1)/2,cy=(cb.y0+cb.y1)/2;
+    return [s,0,0,-s,hm[0]-s*cx,hm[1]+s*cy]}catch(_){return null}
+}
 function defaultA(w,h){
   const c=toM(map.getCenter());
   const lat=map.getCenter().lat*Math.PI/180;
@@ -357,7 +366,8 @@ function loadFile(file){
     let url;try{url=cv.toDataURL('image/webp',0.85);if(!url.startsWith('data:image/webp'))url=cv.toDataURL('image/jpeg',0.85)}catch(e){url=r.result}
     S.hash=dhash(cv);
     const mem=recall(S.hash,w/h);
-    setImage(url,w,h,mem?denorm(mem.An,w,h):null);
+    setImage(url,w,h,mem?denorm(mem.An,w,h):priorA(cv,w,h));
+    if(!mem)fitToImage();
     if(mem&&mem.Hn){S.H=denormH(mem.Hn,w,h);render();save()}
     if(mem){
       fitToImage();
@@ -885,9 +895,22 @@ function refFromCanvas(kind,cv,ox,oy){
   return {kind,ox,oy,fs,Fc:Ff.c,Fs:Ff.s,levels};
 }
 
+/* 会場図の中で、地図が描かれている範囲（余白・説明ボックスを除く）を求める */
+function contentBox(img,bg){
+  const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height,k=Math.min(1,320/Math.max(w,h)),dw=Math.max(8,Math.round(w*k)),dh=Math.max(8,Math.round(h*k));
+  const c=document.createElement('canvas');c.width=dw;c.height=dh;const x=c.getContext('2d');x.drawImage(img,0,0,dw,dh);
+  const {m}=features(x.getImageData(0,0,dw,dh).data,dw,dh,true,bg);
+  // 行・列ごとの地図画素の割合から、ほぼ地図で埋まった範囲を取る
+  const col=new Float32Array(dw),row=new Float32Array(dh);let tot=0;
+  for(let y=0;y<dh;y++)for(let xx=0;xx<dw;xx++)if(m[y*dw+xx]){col[xx]++;row[y]++;tot++}
+  if(tot<50)return {x0:0,y0:0,x1:w,y1:h};
+  const span=(a,n)=>{let s=0,lo=0,hi=n-1;for(let i=0;i<n;i++){s+=a[i];if(s>=tot*0.02){lo=i;break}}s=0;for(let i=n-1;i>=0;i--){s+=a[i];if(s>=tot*0.02){hi=i;break}}return [lo,hi+1]};
+  const [x0,x1]=span(col,dw),[y0,y1]=span(row,dh);
+  return {x0:x0/k,y0:y0/k,x1:x1/k,y1:y1/k};
+}
 /* --- 粗い探索 --- */
 function bgColor(img){
-  const w=img.naturalWidth,h=img.naturalHeight,c=document.createElement('canvas');c.width=w;c.height=h;
+  const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height,c=document.createElement('canvas');c.width=w;c.height=h;
   const x=c.getContext('2d');x.drawImage(img,0,0);const pts=[];
   const s=Math.max(2,Math.round(Math.min(w,h)*0.01));
   [[0,0],[w-s,0],[0,h-s],[w-s,h-s]].forEach(([px,py])=>{const d=x.getImageData(px,py,s,s).data;
@@ -1038,7 +1061,14 @@ async function autoAlign(local){
         for(let i=-2;i<=2;i++)for(let a=-15;a<=15;a+=3)
           jobs.push({ref,lv,Wg:Wg0*Math.pow(1.25,i/2),th:p0.t+a*Math.PI/180,win});
       }else{
-        // 会場（約100ha）全体の図なので横幅は1〜4km、中心は旧上瀬谷通信施設から1.6km以内に限って全方位を探索
+        // ① 目安の配置：会場図の中で地図が描かれた範囲を開催地の幅（約1.5km）・北が上と仮定し、その近くを重点的に探す
+        {const cb=contentBox(img,bg),cw=Math.max(1,cb.x1-cb.x0),mpp0=VENUE_W/cw;
+         const dx=(w/2-(cb.x0+cb.x1)/2)*mpp0,dy=(h/2-(cb.y0+cb.y1)/2)*mpp0,lat=Math.cos(HOME[0]*Math.PI/180);
+         const hm=toM(L.latLng(HOME)),cc=aToFine(ref,[1,0,0,-1,hm[0]+dx/lat,hm[1]-dy/lat],0,0),pwin={x:cc.cx,y:cc.cy,r:900/(m15*FF)};
+         for(let i=-3;i<=5;i++){const Wg=mpp0*w*Math.pow(1.2,i);if(Wg<800||Wg>4000)continue;
+           const lv=ref.levels.find(l=>Wg>=l.minW&&Wg<=l.maxW)||ref.levels[Wg<1600?1:0];
+           for(let a=-30;a<=30;a+=3)jobs.push({ref,lv,Wg,th:a*Math.PI/180,win:pwin})}}
+        // ② 念のため全方位：横幅1〜4km、中心は開催地から1.6km以内
         const c0=aToFine(ref,[1,0,0,-1,...toM(L.latLng(HOME))],0,0),win={x:c0.cx,y:c0.cy,r:SITE_R/(m15*FF)};
         const scales=[];for(let i=0;i<10;i++)scales.push(1000*Math.pow(4,i/9));
         for(const lv of ref.levels)for(const Wg of scales)if(Wg>=lv.minW&&Wg<=lv.maxW)
@@ -1073,7 +1103,7 @@ async function autoAlign(local){
     const sure=sc>=0.35&&margin>=0.08?2:sc>=GOOD&&margin>=0.04?1:0;
     if(!local&&sure<2){
       S.A=autoPrevA;S.H=autoPrevH;render();setMode('edit');
-      autoUI(`自動では位置を決めきれませんでした（一致度 <span class="score">${sc.toFixed(2)}</span>${rival?`・2番目の候補 <span class="score">${rival.r.toFixed(2)}</span>`:''}）。会場図をドラッグ・回転・拡大縮小で<b>だいたい</b>重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。`,100,true);
+      autoUI(`今は開催地の目安の位置・大きさに置いています。自動では位置を決めきれませんでした（一致度 <span class="score">${sc.toFixed(2)}</span>${rival?`・2番目の候補 <span class="score">${rival.r.toFixed(2)}</span>`:''}）。会場図をドラッグ・回転・拡大縮小で<b>だいたい</b>重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。`,100,true);
       $('autoKeep').hidden=true;
       return;
     }
