@@ -124,6 +124,7 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
       </div>
       <div class="row">
         <button class="primary" id="autoBtn" disabled>自動で合わせる</button>
+        <button id="snapBtn" disabled title="今の配置の近くだけを探して吸着させます">ここから自動微調整</button>
         <label class="chk"><input type="checkbox" id="autoOnLoad" checked> 読み込んだら自動で合わせる</label>
       </div>
       <div id="autoPanel" class="note" hidden>
@@ -144,7 +145,7 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
           <button id="alignCancel">やめる</button>
         </div>
       </div>
-      <div class="hint">「自動で合わせる」は会場図の線や川を地理院地図（標準・航空写真）と照合して、回転・縮尺・位置を推定します（10〜30秒）。同じ会場図を次に読み込んだときは、前回の位置をすぐ復元します。</div>
+      <div class="hint">「自動で合わせる」は会場図の線や川を地理院地図（標準・航空写真）と照合して、回転・縮尺・位置を推定します（10〜30秒）。外れるときは、ドラッグや回転でだいたい重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。説明ボックスや文字ラベルは照合から自動で除外します。同じ会場図を次に読み込んだときは、前回の位置をすぐ復元します。</div>
       <div class="hint">目印は交差点・川の曲がり角・既存の建物など、会場図と航空写真の両方で分かる場所を選ぶと正確です。2点で回転と縮尺、3点以上で歪みも補正します。キー操作：矢印で移動（<kbd>Shift</kbd>で細かく）、<kbd>[</kbd> <kbd>]</kbd> で回転、<kbd>-</kbd> <kbd>+</kbd> で拡大縮小。</div>
     </section>
 
@@ -264,7 +265,7 @@ function loadFile(file){
       fitToImage();
       flash('前回この会場図で合わせた位置を復元しました',4000);
     }else if($('autoOnLoad').checked){
-      (imgEl.decode?imgEl.decode():Promise.resolve()).catch(()=>{}).then(()=>autoAlign());
+      (imgEl.decode?imgEl.decode():Promise.resolve()).catch(()=>{}).then(()=>autoAlign(false));
     }else{
       setMode('edit');
       flash('会場図を置きました。「自動で合わせる」か、ドラッグ・目印で位置を合わせてください',5000);
@@ -414,7 +415,7 @@ function setMode(m){
 }
 function ui(){
   const has=!!S.img;
-  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn','autoBtn'].forEach(id=>$(id).disabled=!has);
+  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn','autoBtn','snapBtn'].forEach(id=>$(id).disabled=!has);
   document.querySelectorAll('[data-rot],[data-scl]').forEach(b=>b.disabled=!has);
   $('toggleImg').textContent=S.visible?'表示中':'非表示';$('toggleImg').classList.toggle('on',has&&S.visible);
   $('fineBtn').classList.toggle('on',fine);
@@ -511,10 +512,12 @@ function remember(hash,aspect,An){
 
 /* --- 特徴量：輝度エッジ + 水域（青） --- */
 function features(data,w,h,useMask,bg){
-  const n=w*h,L=new Float32Array(n),f=new Float32Array(n),m=new Uint8Array(n);
+  const n=w*h,L=new Float32Array(n),f=new Float32Array(n),m=new Uint8Array(n),lab=new Uint8Array(n);
   for(let i=0;i<n;i++){
     const r=data[i*4],g=data[i*4+1],b=data[i*4+2],a=data[i*4+3];
     L[i]=(0.299*r+0.587*g+0.114*b)/255;
+    // 会場図側のみ：鮮やかな色の文字・ラベル・点線を照合から外す
+    if(useMask){const mx=Math.max(r,g,b),mn=Math.min(r,g,b);if(mx>90&&(mx-mn)/mx>0.7)lab[i]=1}
     if(useMask){
       if(a<128)m[i]=0;
       else if(bg){const dr=r-bg[0],dg=g-bg[1],db=b-bg[2];m[i]=(dr*dr+dg*dg+db*db)>1600?1:0}
@@ -534,13 +537,27 @@ function features(data,w,h,useMask,bg){
     const water=(b-r>35&&b>=g-5)?1:0;
     f[i]=Math.min(f[i]/mean,4)+2*water;
   }
-  if(useMask&&bg){ // 背景色判定の穴（白い園路など）を2pxふさぐ
-    for(let k=0;k<2;k++){const m2=m.slice();
-      for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;
-        if(!m[i]&&data[i*4+3]>=128&&(m[i-1]||m[i+1]||m[i-w]||m[i+w]))m2[i]=1}
-      m.set(m2)}
+  if(useMask){
+    // ラベル画素とその縁取りのエッジを消す
+    for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;
+      if(lab[i]||lab[i-1]||lab[i+1]||lab[i-w]||lab[i+w])f[i]=Math.min(f[i],0.5)}
+    if(bg){
+      // 周囲の大半が地図である部分だけを残す（説明ボックス・余白・文字を除外、白い園路は残す）
+      const r=Math.max(2,Math.round(Math.min(w,h)/40)),src=new Float32Array(n);
+      for(let i=0;i<n;i++)src[i]=m[i];
+      const frac=boxBlur(src,w,h,r);
+      for(let i=0;i<n;i++)m[i]=(frac[i]>0.55&&data[i*4+3]>=128&&!lab[i])?1:0;
+    }
   }
   return {f:blur(f,w,h),m};
+}
+function boxBlur(f,w,h,r){
+  const t=new Float32Array(f.length),o=new Float32Array(f.length);
+  for(let y=0;y<h;y++){let s=0,c=0;const row=y*w;
+    for(let x=-r;x<w;x++){const ad=x+r;if(ad<w){s+=f[row+ad];c++}const rm=x-r-1;if(rm>=0){s-=f[row+rm];c--}if(x>=0)t[row+x]=s/c}}
+  for(let x=0;x<w;x++){let s=0,c=0;
+    for(let y=-r;y<h;y++){const ad=y+r;if(ad<h){s+=t[ad*w+x];c++}const rm=y-r-1;if(rm>=0){s-=t[rm*w+x];c--}if(y>=0)o[y*w+x]=s/c}}
+  return o;
 }
 function blur(f,w,h){
   const t=new Float32Array(f.length),o=new Float32Array(f.length);
@@ -581,8 +598,10 @@ async function buildRef(kind){
   const jobs=[];
   for(let ty=Math.floor(oy/256);ty<=Math.floor((oy+BOX-1)/256);ty++)
     for(let tx=Math.floor(ox/256);tx<=Math.floor((ox+BOX-1)/256);tx++)
-      jobs.push(loadTile(url.replace('{x}',tx).replace('{y}',ty)).then(im=>{if(im)cx.drawImage(im,tx*256-ox,ty*256-oy)}));
+      jobs.push(loadTile(url.replace('{x}',tx).replace('{y}',ty)).then(im=>{if(im){cx.drawImage(im,tx*256-ox,ty*256-oy);loaded++}}));
+  let loaded=0;
   await Promise.all(jobs);
+  if(loaded<jobs.length*0.5)throw new Error('notile');
   return refCache[kind]=refFromCanvas(kind,cv,ox,oy);
 }
 function refFromCanvas(kind,cv,ox,oy){
@@ -621,7 +640,7 @@ function renderTmpl(img,k,theta){
   return {tw,th,data:x.getImageData(0,0,tw,th).data};
 }
 const Zr=new Float64Array(N*N),Zi=new Float64Array(N*N),Pr=new Float64Array(N*N),Pi=new Float64Array(N*N),Qr=new Float64Array(N*N),Qi=new Float64Array(N*N);
-function coarseCombo(ref,img,bg,k,theta){ // ref = 探索レベル
+function coarseCombo(ref,img,bg,k,theta,win){ // ref = 探索レベル、win = 中心の探索範囲（精密px）
   const {tw,th,data}=renderTmpl(img,k,theta);
   if(tw>ref.cs||th>ref.cs||tw<8||th<8)return null;
   const {f,m}=features(data,tw,th,true,bg);
@@ -645,7 +664,9 @@ function coarseCombo(ref,img,bg,k,theta){ // ref = 探索レベル
   }
   fft2(Pr,Pi,true);fft2(Qr,Qi,true);
   let best=-2,bx=0,by=0;
+  const f2w=ref.cf/FF;
   for(let ty=0;ty<=ref.cs-th;ty++)for(let tx=0;tx<=ref.cs-tw;tx++){
+    if(win){const ex=(tx+tw/2+ref.off)*f2w-win.x,ey=(ty+th/2+ref.off)*f2w-win.y;if(ex*ex+ey*ey>win.r*win.r)continue}
     const i=ty*N+tx,c1=Pr[i],c2=Pi[i],v=Qr[i]-c2*c2/nM;
     if(v<=1e-6)continue;const s=c1/Math.sqrt(ET*v);
     if(s>best){best=s;bx=tx;by=ty}}
@@ -668,10 +689,10 @@ function finePoints(img,bg,kf){
   return {px,py,pv:pv.map(v=>v-mv),w,h,area:idx.length};
 }
 function fineScore(ref,P,p){
-  const co=Math.cos(p.t)*p.k,si=Math.sin(p.t)*p.k,F=ref.F,S2=ref.fs;
+  const M=p.m||[Math.cos(p.t)*p.k,-Math.sin(p.t)*p.k,Math.sin(p.t)*p.k,Math.cos(p.t)*p.k],F=ref.F,S2=ref.fs;
   let sxy=0,sy=0,syy=0,n=0,out=0;const cw=P.w/2,ch=P.h/2;
   for(let i=0;i<P.px.length;i++){
-    const dx=P.px[i]-cw,dy=P.py[i]-ch,u=p.cx+co*dx-si*dy-0.5,v=p.cy+si*dx+co*dy-0.5;
+    const dx=P.px[i]-cw,dy=P.py[i]-ch,u=p.cx+M[0]*dx+M[1]*dy-0.5,v=p.cy+M[2]*dx+M[3]*dy-0.5;
     if(u<0||v<0||u>=S2-1||v>=S2-1){out++;continue}
     const x0=u|0,y0=v|0,fx=u-x0,fy=v-y0,o=y0*S2+x0;
     const s=(F[o]*(1-fx)+F[o+1]*fx)*(1-fy)+(F[o+S2]*(1-fx)+F[o+S2+1]*fx)*fy;
@@ -698,11 +719,24 @@ function refine(ref,img,bg,cand){
     }
     if(!improved){step.cx/=2;step.cy/=2;step.t/=2;step.k/=2;if(step.cx<0.2)break}
   }
+  // 斜めから撮った写真などのため、最後に軽い歪み（アフィン）も許して詰める
+  let q={cx:p.cx,cy:p.cy,m:[Math.cos(p.t)*p.k,-Math.sin(p.t)*p.k,Math.sin(p.t)*p.k,Math.cos(p.t)*p.k],t:p.t,k:p.k};
+  let qb=best,st=[1.5,0.02*p.k];
+  for(let it=0;it<120;it++){
+    let improved=false;
+    for(let j=0;j<6;j++)for(const dir of [1,-1]){
+      const r={cx:q.cx,cy:q.cy,m:q.m.slice(),t:q.t,k:q.k};
+      if(j===0)r.cx+=dir*st[0];else if(j===1)r.cy+=dir*st[0];else r.m[j-2]+=dir*st[1];
+      const sc=fineScore(ref,P,r);if(sc>qb){qb=sc;q=r;improved=true;break}
+    }
+    if(!improved){st[0]/=2;st[1]/=2;if(st[0]<0.2)break}
+  }
+  if(qb>best+0.01){best=qb;p=q}
   return {score:best*Math.pow(P.area,0.25),r:best,p};
 }
 function fineToA(ref,p,w,h){
-  const co=Math.cos(p.t)*p.k,si=Math.sin(p.t)*p.k;
-  const toMeters=(x,y)=>{const dx=x-w/2,dy=y-h/2,u=p.cx+co*dx-si*dy,v=p.cy+si*dx+co*dy;
+  const M=p.m||[Math.cos(p.t)*p.k,-Math.sin(p.t)*p.k,Math.sin(p.t)*p.k,Math.cos(p.t)*p.k];
+  const toMeters=(x,y)=>{const dx=x-w/2,dy=y-h/2,u=p.cx+M[0]*dx+M[1]*dy,v=p.cy+M[2]*dx+M[3]*dy;
     const X=ref.ox+u*FF,Y=ref.oy+v*FF;return [(X/SCALE15-0.5)*EARTH,(0.5-Y/SCALE15)*EARTH]};
   const m0=toMeters(0,0),m1=toMeters(w,0),m2=toMeters(0,h);
   return [(m1[0]-m0[0])/w,(m1[1]-m0[1])/w,(m2[0]-m0[0])/h,(m2[1]-m0[1])/h,m0[0],m0[1]];
@@ -715,60 +749,85 @@ function autoUI(msg,pct,done){
   $('autoBarWrap').hidden=done;$('autoBar').style.width=(pct||0)+'%';
   $('autoActions').hidden=!done;
 }
-async function autoAlign(){
+function aToFine(ref,A,w,h){
+  // 現在の配置（メートル）→ 精密グリッド上の中心・回転・縮尺
+  const f=SCALE15/(EARTH*FF);
+  const c=apply(A,w/2,h/2),ux=A[0]*f,vx=-A[1]*f;
+  return {cx:(c[0]/EARTH+0.5)*SCALE15/FF-ref.ox/FF,cy:(0.5-c[1]/EARTH)*SCALE15/FF-ref.oy/FF,t:Math.atan2(vx,ux),k:Math.hypot(ux,vx)};
+}
+const GOOD=0.2;
+async function autoAlign(local){
   if(!S.img||autoRunning)return;
   autoRunning=true;setMode(null);autoPrevA=S.A.slice();$('autoKeep').hidden=false;
-  $('autoBtn').disabled=true;
+  $('autoBtn').disabled=true;$('snapBtn').disabled=true;
   try{
     const img=imgEl;const w=img.naturalWidth,h=img.naturalHeight;
     const bg=bgColor(img);
     autoUI('地理院地図を読み込んでいます…',2);
-    const refs=[];
-    for(const kind of ['std','photo']){try{refs.push(await buildRef(kind))}catch(e){if(e.message==='tainted')throw e}}
-    if(!refs.length)throw new Error('noref');
-    // 会場図の横幅（地上距離）は 0.6〜4km の範囲で探索
+    const refs=[];let lastErr=null;
+    for(const kind of ['std','photo']){try{refs.push(await buildRef(kind))}catch(e){lastErr=e}}
+    if(!refs.length)throw lastErr||new Error('notile');
     const m15=(EARTH/SCALE15)*Math.cos(HOME[0]*Math.PI/180);
-    const scales=[];for(let i=0;i<12;i++)scales.push(600*Math.pow(4000/600,i/11));
-    const angles=[];for(let a=0;a<360;a+=10)angles.push(a*Math.PI/180);
     const jobs=[];
-    for(const ref of refs)for(const lv of ref.levels)for(const Wg of scales)if(Wg>=lv.minW&&Wg<=lv.maxW)jobs.push({ref,lv,Wg});
-    const total=jobs.length*angles.length;let done=0;const cands=[];
-    for(const j of jobs){
-      const k=(j.Wg/(m15*j.lv.cf))/w;
-      for(const th of angles){
-        const r=coarseCombo(j.lv,img,bg,k,th);
-        if(r){r.ref=j.ref;cands.push(r)}
-        if(++done%6===0){autoUI(`会場図と地図を照合しています（${Math.round(done/total*100)}%）`,5+done/total*75);await pause()}
+    for(const ref of refs){
+      if(local){
+        // 今の配置の近く（回転±15°・縮尺±25%・位置±600m）だけを探す
+        const p0=aToFine(ref,S.A,w,h),Wg0=p0.k*w*m15*FF;
+        const lv=ref.levels.find(l=>Wg0>=l.minW&&Wg0<=l.maxW)||ref.levels[Wg0<1600?1:0];
+        const win={x:p0.cx,y:p0.cy,r:600/(m15*FF)};
+        for(let i=-2;i<=2;i++)for(let a=-15;a<=15;a+=3)
+          jobs.push({ref,lv,Wg:Wg0*Math.pow(1.25,i/2),th:p0.t+a*Math.PI/180,win});
+      }else{
+        // 会場図の横幅（地上距離）0.6〜4km・全方位を探索
+        const scales=[];for(let i=0;i<12;i++)scales.push(600*Math.pow(4000/600,i/11));
+        for(const lv of ref.levels)for(const Wg of scales)if(Wg>=lv.minW&&Wg<=lv.maxW)
+          for(let a=0;a<360;a+=10)jobs.push({ref,lv,Wg,th:a*Math.PI/180,win:null});
       }
+    }
+    let done=0;const cands=[];
+    for(const j of jobs){
+      const r=coarseCombo(j.lv,img,bg,(j.Wg/(m15*j.lv.cf))/w,j.th,j.win);
+      if(r&&r.r>-1){r.ref=j.ref;cands.push(r)}
+      if(++done%6===0){autoUI(`会場図と地図を照合しています（${Math.round(done/jobs.length*100)}%）`,5+done/jobs.length*75);await pause()}
     }
     if(!cands.length)throw new Error('nocand');
     cands.sort((a,b)=>b.score-a.score);
     const top=[];
     for(const c of cands){
       if(top.some(t=>t.ref===c.ref&&Math.abs(t.fx-c.fx)<16&&Math.abs(t.fy-c.fy)<16&&Math.abs(Math.atan2(Math.sin(t.theta-c.theta),Math.cos(t.theta-c.theta)))<0.3))continue;
-      top.push(c);if(top.length>=16)break;
+      top.push(c);if(top.length>=(local?6:16))break;
     }
+    if(local)for(const ref of refs){const p0=aToFine(ref,S.A,w,h);top.push({ref,fx:p0.cx,fy:p0.cy,theta:p0.t,kf:p0.k})}
     let best=null;
     for(let i=0;i<top.length;i++){
       autoUI(`候補を細かく詰めています（${i+1}/${top.length}）`,80+i/top.length*18);await pause();
       const r=refine(top[i].ref,img,bg,top[i]);r.ref=top[i].ref;
       if(!best||r.score>best.score)best=r;
     }
-    S.A=fineToA(best.ref,best.p,w,h);S.visible=true;render();fitToImage();
-    const sc=best.r,level=sc>=0.35?'高い':sc>=0.2?'まあまあ':'低い';
+    const sc=best.r;
+    if(!local&&sc<GOOD){
+      S.A=autoPrevA;render();setMode('edit');
+      autoUI(`自動では位置を決めきれませんでした（一致度 <span class="score">${sc.toFixed(2)}</span>）。会場図をドラッグ・回転・拡大縮小で<b>だいたい</b>重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。`,100,true);
+      $('autoKeep').hidden=true;
+      return;
+    }
+    S.A=fineToA(best.ref,best.p,w,h);S.visible=true;render();if(!local)fitToImage();
+    const level=sc>=0.35?'高い':sc>=GOOD?'まあまあ':'低い';
     const deg=((best.p.t*180/Math.PI)%360+360)%360;
-    autoUI(`自動で合わせました。一致度 <span class="score">${sc.toFixed(2)}</span>（${level}）・${best.ref.kind==='photo'?'航空写真':'標準地図'}と照合・図の上方向は北から時計回りに${deg.toFixed(0)}°。`+
-      (sc<0.2?'<br>自信が低いので、ずれていたら「目印で修正する」で2〜3点合わせてください。':'<br>透明度を変えて確認し、ずれていれば目印で修正できます。'),100,true);
+    autoUI(`${local?'近くを探して吸着させました':'自動で合わせました'}。一致度 <span class="score">${sc.toFixed(2)}</span>（${level}）・${best.ref.kind==='photo'?'航空写真':'標準地図'}と照合・図の上方向は北から時計回りに${deg.toFixed(0)}°。`+
+      (sc<GOOD?'<br>自信が低いので、ずれていたら「元に戻す」か「目印で修正する」を使ってください。':'<br>透明度を変えて確認し、ずれていれば目印で修正できます。'),100,true);
   }catch(e){
     S.A=autoPrevA;render();
-    const msg=e.message==='tainted'?'地図タイルの画像を読み取れなかったため、自動で合わせられませんでした。ブラウザでファイルを開き直すか、目印で合わせてください。'
-      :'自動で合わせられませんでした。会場図がはっきり写った画像で試すか、目印で合わせてください。';
+    const msg=e.message==='tainted'?'地図タイルの画像を読み取れなかったため、自動で合わせられませんでした。ブラウザでファイルを直接開いて試してください。'
+      :e.message==='notile'?'地理院地図のタイルを取得できませんでした。インターネット接続を確認し、ファイルをChromeやSafariなどのブラウザで直接開いてください（Claudeアプリ内のプレビューでは地図を読み込めません）。'
+      :'自動で合わせられませんでした。会場図をだいたい重ねてから「ここから自動微調整」を試すか、目印で合わせてください。';
     autoUI(msg,0,true);$('autoKeep').hidden=true;
   }finally{
-    autoRunning=false;$('autoBtn').disabled=!S.img;save();
+    autoRunning=false;$('autoBtn').disabled=!S.img;$('snapBtn').disabled=!S.img;save();
   }
 }
-$('autoBtn').onclick=()=>{$('autoKeep').hidden=false;autoAlign()};
+$('autoBtn').onclick=()=>autoAlign(false);
+$('snapBtn').onclick=()=>autoAlign(true);
 $('autoKeep').onclick=()=>{$('autoPanel').hidden=true;save();flash('位置を決定しました',2000)};
 $('autoUndo').onclick=()=>{if(autoPrevA){S.A=autoPrevA;render();save()}$('autoPanel').hidden=true;setMode('edit')};
 $('autoFix').onclick=()=>{$('autoPanel').hidden=true;setMode('align')};
