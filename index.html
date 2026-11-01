@@ -19,6 +19,7 @@
   --bg:#121814; --panel:#18201b; --fg:#e4ebe5; --muted:#9aa89e; --line:#2c3730;
   --accent:#5fbf82; --accent-ink:#0d1a12; --soft:#213027; --mark:#ff6fb0; --warn:#f0a948; color-scheme:dark}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--fg);font:14px/1.6 var(--ui)}
 .app{height:100%;display:grid;grid-template-columns:360px 1fr}
@@ -81,6 +82,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .pop input{font:inherit;padding:6px 8px;border:1px solid #ccc;border-radius:6px;width:100%}
 .pop .row button{font-size:12px}
 .pop .num{color:#666}
+.geo-row{display:grid;grid-template-columns:auto 5.2em auto auto 5.2em auto;gap:6px;align-items:center;font-size:13px}
+.geo-row input{font:inherit;font-family:var(--mono);font-size:13px;width:100%;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);font-variant-numeric:tabular-nums}
+.hdl{width:16px;height:16px;transform:translate(-8px,-8px);background:#fff;border:3px solid var(--mark);box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:nwse-resize;touch-action:none}
+.hdl.rot{border-radius:50%;cursor:grab;width:20px;height:20px;transform:translate(-10px,-10px)}
+@media (pointer:coarse){.hdl{width:24px;height:24px;transform:translate(-12px,-12px)}.hdl.rot{width:28px;height:28px;transform:translate(-14px,-14px)}}
+.locbtn{width:40px;height:40px;border-radius:8px;border:2px solid rgba(0,0,0,.2);background:#fff;color:#1d2a22;display:grid;place-items:center;cursor:pointer;padding:0;margin-bottom:calc(10px + env(safe-area-inset-bottom,0px))!important}
+.locbtn.on{color:#1f6fd1;border-color:#1f6fd1}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
 .chk input{accent-color:var(--accent)}
 .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px}
@@ -111,7 +119,7 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
     <section>
       <h2><span class="n">2</span>位置を合わせる</h2>
       <div class="row">
-        <button id="editBtn" disabled>ドラッグで移動</button>
+        <button id="editBtn" disabled>手で動かす</button>
         <button id="alignBtn" disabled>目印で合わせる</button>
         <button id="toggleImg" disabled>表示中</button>
       </div>
@@ -136,6 +144,10 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
           <button id="autoFix">目印で修正する</button>
         </div>
       </div>
+      <div class="geo-row">
+        <label for="wKm">横幅</label><input type="number" id="wKm" step="0.05" min="0.1" max="20" inputmode="decimal" disabled><span class="hint">km</span>
+        <label for="rotDeg">向き</label><input type="number" id="rotDeg" step="0.5" min="-180" max="180" inputmode="decimal" disabled><span class="hint">°</span>
+      </div>
       <label class="slider">透明度<input type="range" id="opacity" min="0.1" max="1" step="0.05" value="0.65"><span class="num" id="opv">65%</span></label>
       <div id="alignPanel" class="note" hidden>
         <div id="alignMsg"></div>
@@ -146,7 +158,7 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
         </div>
       </div>
       <div class="hint">「自動で合わせる」は会場図の線や川を地理院地図（標準・航空写真）と照合して、回転・縮尺・位置を推定します（10〜30秒）。外れるときは、ドラッグや回転でだいたい重ねてから「ここから自動微調整」を押すと、近くを探して吸着させます。説明ボックスや文字ラベルは照合から自動で除外します。同じ会場図を次に読み込んだときは、前回の位置をすぐ復元します。</div>
-      <div class="hint">目印は交差点・川の曲がり角・既存の建物など、会場図と航空写真の両方で分かる場所を選ぶと正確です。2点で回転と縮尺、3点以上で歪みも補正します。キー操作：矢印で移動（<kbd>Shift</kbd>で細かく）、<kbd>[</kbd> <kbd>]</kbd> で回転、<kbd>-</kbd> <kbd>+</kbd> で拡大縮小。</div>
+      <div class="hint">目印は交差点・川の曲がり角・既存の建物など、会場図と航空写真の両方で分かる場所を選ぶと正確です。2点で回転と縮尺、3点以上で歪みも補正します。「手で動かす」中は、画像をドラッグで移動、四隅の■で拡大縮小、上の●で回転（スマホは2本指で拡大・回転）。横幅と向きは数値でも指定できます。キー操作：矢印で移動（<kbd>Shift</kbd>で細かく）、<kbd>[</kbd> <kbd>]</kbd> で回転、<kbd>-</kbd> <kbd>+</kbd> で拡大縮小。</div>
     </section>
 
     <section>
@@ -232,6 +244,7 @@ function render(){
   imgEl.style.width=S.w+'px'; imgEl.style.height=S.h+'px';
   imgEl.style.transform=`matrix(${(p1.x-p0.x)/S.w},${(p1.y-p0.y)/S.w},${(p2.x-p0.x)/S.h},${(p2.y-p0.y)/S.h},${p0.x},${p0.y})`;
   imgEl.style.opacity=S.opacity;
+  updHandles();readout();
 }
 map.on('zoomstart',()=>{pane.style.visibility='hidden'});
 map.on('zoomend viewreset',()=>{render();pane.style.visibility=''});
@@ -275,28 +288,82 @@ function loadFile(file){
 }
 
 /* similarity / scale / rotate around image center (in mercator meters) */
-function transformAround(scale,angDeg){
+function transformAround(scale,angDeg,noSave){
   if(!S.img)return;
   const c=apply(S.A,S.w/2,S.h/2),t=angDeg*Math.PI/180,co=Math.cos(t)*scale,si=Math.sin(t)*scale;
   const A=S.A,R=(x,y)=>[co*x-si*y,si*x+co*y];
   const c1=R(A[0],A[1]),c2=R(A[2],A[3]),tr=R(A[4]-c[0],A[5]-c[1]);
-  S.A=[c1[0],c1[1],c2[0],c2[1],tr[0]+c[0],tr[1]+c[1]];render();save();
+  S.A=[c1[0],c1[1],c2[0],c2[1],tr[0]+c[0],tr[1]+c[1]];render();if(!noSave)save();
 }
-function moveBy(dx,dy){if(!S.img)return;S.A[4]+=dx;S.A[5]+=dy;render();save()}
+function moveBy(dx,dy,noSave){if(!S.img)return;S.A[4]+=dx;S.A[5]+=dy;render();if(!noSave)save()}
 
-/* drag */
-let drag=null;
+/* 地上の横幅（km）と向き（図の上方向が北から時計回りに何度か） */
+function geom(){
+  const lat=Math.cos(toLL(apply(S.A,S.w/2,S.h/2)).lat*Math.PI/180);
+  const widthKm=Math.hypot(S.A[0],S.A[1])*S.w*lat/1000;
+  const bearing=((Math.atan2(-S.A[2],-S.A[3])*180/Math.PI)%360+360)%360;
+  return {widthKm,bearing};
+}
+function readout(){
+  if(!S.img)return;const g=geom();
+  if(document.activeElement!==$('wKm'))$('wKm').value=g.widthKm.toFixed(2);
+  if(document.activeElement!==$('rotDeg'))$('rotDeg').value=(g.bearing>180?g.bearing-360:g.bearing).toFixed(1);
+}
+
+/* ドラッグ（1本指・マウス）／ピンチ（2本指で拡大縮小・回転）／Shift+ホイール */
+const ptrs=new Map();let drag=null,pinch=null;
+const ptM=e=>toM(map.mouseEventToLatLng(e));
+function pinchState(){const [a,b]=[...ptrs.values()];return {d:Math.hypot(b.x-a.x,b.y-a.y),ang:Math.atan2(b.y-a.y,b.x-a.x),mid:toM(map.containerPointToLatLng(L.point((a.x+b.x)/2,(a.y+b.y)/2)))}}
 imgEl.addEventListener('pointerdown',e=>{
   if(mode!=='edit')return;e.preventDefault();e.stopPropagation();
-  map.dragging.disable();imgEl.setPointerCapture(e.pointerId);
-  drag={m:toM(map.mouseEventToLatLng(e))};
+  map.dragging.disable();map.touchZoom.disable();imgEl.setPointerCapture(e.pointerId);
+  const cp=map.mouseEventToContainerPoint(e);ptrs.set(e.pointerId,{x:cp.x,y:cp.y});
+  if(ptrs.size===1){drag={m:ptM(e)};pinch=null}
+  else if(ptrs.size===2){drag=null;pinch=pinchState()}
 });
 imgEl.addEventListener('pointermove',e=>{
-  if(!drag)return;const m=toM(map.mouseEventToLatLng(e));
-  S.A[4]+=m[0]-drag.m[0];S.A[5]+=m[1]-drag.m[1];drag.m=m;render();
+  if(!ptrs.has(e.pointerId))return;
+  const cp=map.mouseEventToContainerPoint(e);ptrs.set(e.pointerId,{x:cp.x,y:cp.y});
+  if(pinch&&ptrs.size>=2){
+    const n=pinchState();
+    moveBy(n.mid[0]-pinch.mid[0],n.mid[1]-pinch.mid[1],true);
+    transformAround(n.d/pinch.d,-(n.ang-pinch.ang)*180/Math.PI,true);
+    pinch=pinchState();
+  }else if(drag){const m=ptM(e);moveBy(m[0]-drag.m[0],m[1]-drag.m[1],true);drag.m=m}
 });
-const endDrag=e=>{if(!drag)return;drag=null;map.dragging.enable();save()};
+const endDrag=e=>{
+  if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
+  if(ptrs.size===1){const [p]=ptrs.values();drag={m:toM(map.containerPointToLatLng(L.point(p.x,p.y)))};pinch=null}
+  if(ptrs.size===0){drag=null;pinch=null;map.dragging.enable();map.touchZoom.enable();save()}
+};
 imgEl.addEventListener('pointerup',endDrag);imgEl.addEventListener('pointercancel',endDrag);
+imgEl.addEventListener('wheel',e=>{
+  if(mode!=='edit'||!e.shiftKey)return;e.preventDefault();e.stopPropagation();
+  transformAround(e.deltaY<0?1.03:1/1.03,0);
+},{passive:false});
+
+/* 四隅のハンドル（拡大縮小）と上の丸ハンドル（回転） */
+const hLayer=L.layerGroup().addTo(map);let handles=[],hDrag=null;
+const hIcon=cls=>L.divIcon({className:'',html:`<div class="hdl ${cls}" draggable="false"></div>`,iconSize:[0,0]});
+function hPos(h){return h.rot?apply(S.A,S.w/2,-S.h*0.06-0.04*S.w):apply(S.A,h.x,h.y)}
+function drawHandles(){
+  hLayer.clearLayers();handles=[];
+  if(mode!=='edit'||!S.img||!S.visible)return;
+  const defs=[{x:0,y:0},{x:S.w,y:0},{x:S.w,y:S.h},{x:0,y:S.h},{rot:true}];
+  defs.forEach(d=>{
+    const mk=L.marker(toLL(hPos(d)),{icon:hIcon(d.rot?'rot':'corner'),draggable:true,zIndexOffset:1000,keyboard:false}).addTo(hLayer);
+    d.mk=mk;handles.push(d);
+    mk.on('dragstart',()=>{hDrag={d,prev:toM(mk.getLatLng())}});
+    mk.on('drag',()=>{
+      const c=apply(S.A,S.w/2,S.h/2),m=toM(mk.getLatLng()),p0=hDrag.prev;
+      if(d.rot){const a=Math.atan2(m[1]-c[1],m[0]-c[0])-Math.atan2(p0[1]-c[1],p0[0]-c[0]);transformAround(1,a*180/Math.PI,true)}
+      else{const r0=Math.hypot(p0[0]-c[0],p0[1]-c[1]),r1=Math.hypot(m[0]-c[0],m[1]-c[1]);if(r0>0&&r1>0)transformAround(r1/r0,0,true)}
+      hDrag.prev=m;
+    });
+    mk.on('dragend',()=>{hDrag=null;updHandles();save()});
+  });
+}
+function updHandles(){handles.forEach(h=>{if(!hDrag||hDrag.d!==h)h.mk.setLatLng(toLL(hPos(h)))})}
 
 /* ---------- alignment by landmarks ---------- */
 let al={pairs:[],pending:null,layer:L.layerGroup().addTo(map)};
@@ -403,19 +470,19 @@ map.on('click',e=>{if(mode==='align')alignClick(e);else if(mode==='pin')pinClick
 function setMode(m){
   if(mode==='align'&&m!=='align'){al.pairs=[];al.pending=null;al.layer.clearLayers();imgEl.style.opacity=S.opacity}
   mode=(mode===m)?null:m;
-  imgEl.classList.toggle('edit',mode==='edit');
+  imgEl.classList.toggle('edit',mode==='edit');drawHandles();
   $('editBtn').classList.toggle('on',mode==='edit');
   $('alignBtn').classList.toggle('on',mode==='align');
   $('pinBtn').classList.toggle('on',mode==='pin');
   $('alignPanel').hidden=mode!=='align';
   map.getContainer().style.cursor=(mode==='align'||mode==='pin')?'crosshair':'';
   if(mode==='align'){S.visible=true;render();alignMsg()}
-  status(mode==='edit'?'会場図をドラッグして移動できます':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':'');
+  status(mode==='edit'?'ドラッグで移動・四隅の■で拡大縮小・上の●で回転':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':'');
   ui();
 }
 function ui(){
   const has=!!S.img;
-  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn','autoBtn','snapBtn'].forEach(id=>$(id).disabled=!has);
+  ['clearImg','editBtn','alignBtn','toggleImg','fineBtn','autoBtn','snapBtn','wKm','rotDeg'].forEach(id=>$(id).disabled=!has);
   document.querySelectorAll('[data-rot],[data-scl]').forEach(b=>b.disabled=!has);
   $('toggleImg').textContent=S.visible?'表示中':'非表示';$('toggleImg').classList.toggle('on',has&&S.visible);
   $('fineBtn').classList.toggle('on',fine);
@@ -423,24 +490,58 @@ function ui(){
   document.querySelectorAll('[data-base]').forEach(b=>b.classList.toggle('on',b.dataset.base===S.base));
 }
 function status(t){$('status').hidden=!t;$('status').textContent=t}
-let ft;function flash(t,ms){status(t);clearTimeout(ft);ft=setTimeout(()=>status(mode==='edit'?'会場図をドラッグして移動できます':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':''),ms)}
+let ft;function flash(t,ms){status(t);clearTimeout(ft);ft=setTimeout(()=>status(mode==='edit'?'ドラッグで移動・四隅の■で拡大縮小・上の●で回転':mode==='align'?'目印モード：会場図の点 → 実際の地図の点 の順にタップ':mode==='pin'?'ピン追加モード：地図をタップ':''),ms)}
 
 $('file').onchange=e=>{loadFile(e.target.files[0]);e.target.value=''};
 $('clearImg').onclick=()=>{S.img=null;S.A=null;setMode(null);render();ui();save()};
 $('editBtn').onclick=()=>setMode('edit');
 $('alignBtn').onclick=()=>setMode('align');
 $('pinBtn').onclick=()=>setMode('pin');
-$('toggleImg').onclick=()=>{S.visible=!S.visible;render();ui();save()};
+$('toggleImg').onclick=()=>{S.visible=!S.visible;render();drawHandles();ui();save()};
 $('fineBtn').onclick=()=>{fine=!fine;ui()};
 document.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>transformAround(1,(fine?0.1:1)*b.dataset.rot));
 document.querySelectorAll('[data-scl]').forEach(b=>b.onclick=()=>transformAround(1+(fine?0.002:0.02)*b.dataset.scl,0));
+$('wKm').onchange=e=>{const v=parseFloat(e.target.value);if(!(v>0))return readout();transformAround(v/geom().widthKm,0)};
+$('rotDeg').onchange=e=>{const v=parseFloat(e.target.value);if(isNaN(v))return readout();let d=v-geom().bearing;d=((d+540)%360)-180;transformAround(1,-d)};
 $('opacity').oninput=e=>{S.opacity=+e.target.value;render();ui();save()};
 document.querySelectorAll('[data-base]').forEach(b=>b.onclick=()=>setBase(b.dataset.base));
 function setBase(k){Object.values(bases).forEach(l=>map.removeLayer(l));bases[k].addTo(map);S.base=k;ui();save()}
 $('homeBtn').onclick=()=>map.flyTo(HOME,HOME_Z);
-$('locBtn').onclick=()=>{map.locate({setView:true,maxZoom:17});};
-map.on('locationerror',()=>flash('現在地を取得できませんでした。ブラウザの位置情報の許可を確認してください',4000));
-let locMk;map.on('locationfound',e=>{if(locMk)map.removeLayer(locMk);locMk=L.circleMarker(e.latlng,{radius:7,color:'#fff',weight:2,fillColor:'#1f6fd1',fillOpacity:1}).addTo(map)});
+/* 現在地（追跡） */
+const geo={watch:null,dot:null,acc:null,first:true,follow:true,last:null};
+const LocCtl=L.Control.extend({options:{position:'bottomright'},onAdd(){
+  const b=L.DomUtil.create('button','locbtn');b.type='button';b.id='locCtl';b.title='現在地を表示';b.setAttribute('aria-label','現在地を表示');
+  b.innerHTML='<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2"/></svg>';
+  L.DomEvent.disableClickPropagation(b);L.DomEvent.on(b,'click',toggleLocate);return b}});
+new LocCtl().addTo(map);
+function locUI(){const on=geo.watch!=null;$('locCtl').classList.toggle('on',on);$('locBtn').classList.toggle('on',on);$('locBtn').textContent=on?'現在地を止める':'現在地'}
+function stopLocate(){if(geo.watch!=null)navigator.geolocation.clearWatch(geo.watch);geo.watch=null;
+  if(geo.dot)map.removeLayer(geo.dot);if(geo.acc)map.removeLayer(geo.acc);geo.dot=geo.acc=null;locUI()}
+function toggleLocate(){
+  if(geo.watch!=null){
+    // 表示中に押したら、まず現在地へ戻る。現在地を表示中なら止める
+    if(geo.last&&!map.getBounds().pad(-0.2).contains(geo.last)){map.flyTo(geo.last,Math.max(map.getZoom(),17));return}
+    stopLocate();flash('現在地の表示を止めました',2000);return}
+  if(!navigator.geolocation){flash('このブラウザは位置情報に対応していません',4000);return}
+  if(!window.isSecureContext){flash('現在地は https で公開したページで使えます（http では使えません）',5000);return}
+  geo.first=true;status('現在地を取得しています…');
+  geo.watch=navigator.geolocation.watchPosition(pos=>{
+    const ll=L.latLng(pos.coords.latitude,pos.coords.longitude),a=pos.coords.accuracy;geo.last=ll;
+    if(!geo.dot){
+      geo.acc=L.circle(ll,{radius:a,color:'#1f6fd1',weight:1,fillColor:'#1f6fd1',fillOpacity:.12,interactive:false}).addTo(map);
+      geo.dot=L.circleMarker(ll,{radius:8,color:'#fff',weight:3,fillColor:'#1f6fd1',fillOpacity:1}).addTo(map).bindTooltip('現在地');
+    }else{geo.dot.setLatLng(ll);geo.acc.setLatLng(ll).setRadius(a)}
+    if(geo.first){geo.first=false;map.flyTo(ll,Math.max(map.getZoom(),17));
+      const far=map.distance(ll,L.latLng(HOME))>5000;
+      flash(`現在地を表示中（誤差 約${Math.round(a)}m）`+(far?'。会場から離れた場所にいます':''),3500)}
+  },err=>{
+    stopLocate();
+    flash(err.code===1?'位置情報の利用が許可されていません。ブラウザやスマホの設定で、このページへの位置情報の許可をオンにしてください'
+      :'現在地を取得できませんでした。屋外や電波の良い場所で、もう一度お試しください',6000);
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+  locUI();
+}
+$('locBtn').onclick=toggleLocate;
 function updG(){const c=map.getCenter();$('gmapLink').href=`https://www.google.com/maps/@${c.lat.toFixed(6)},${c.lng.toFixed(6)},${map.getZoom()}z/data=!3m1!1e3`}
 map.on('moveend',updG);
 
@@ -464,7 +565,11 @@ document.addEventListener('keydown',e=>{
 
 /* drop & paste */
 const wrap=document.querySelector('.mapwrap');let dc=0;
-wrap.addEventListener('dragenter',e=>{if([...e.dataTransfer.types].includes('Files')){dc++;$('drop').hidden=false;e.preventDefault()}});
+let innerDrag=false; // ページ内のドラッグ（画像・ハンドル）では表示しない
+document.addEventListener('dragstart',()=>{innerDrag=true});
+document.addEventListener('dragend',()=>{innerDrag=false;dc=0;$('drop').hidden=true});
+document.addEventListener('pointerdown',()=>{if(!$('drop').hidden){dc=0;$('drop').hidden=true}});
+wrap.addEventListener('dragenter',e=>{if(!innerDrag&&[...e.dataTransfer.types].includes('Files')){dc++;$('drop').hidden=false;e.preventDefault()}});
 wrap.addEventListener('dragover',e=>e.preventDefault());
 wrap.addEventListener('dragleave',()=>{if(--dc<=0){dc=0;$('drop').hidden=true}});
 wrap.addEventListener('drop',e=>{e.preventDefault();dc=0;$('drop').hidden=true;const f=e.dataTransfer.files[0];if(f)loadFile(f)});
